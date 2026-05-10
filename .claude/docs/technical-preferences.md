@@ -1,87 +1,71 @@
 # Technical Preferences
 
-<!-- Populated by /setup-engine. Updated as the user makes decisions throughout development. -->
-<!-- All agents reference this file for project-specific standards and conventions. -->
-
 ## Engine & Language
 
-- **Engine**: [TO BE CONFIGURED — run /setup-engine]
-- **Language**: [TO BE CONFIGURED]
-- **Rendering**: [TO BE CONFIGURED]
-- **Physics**: [TO BE CONFIGURED]
+- **Engine**: Godot 4.6.2
+- **Language**: GDScript
+- **Rendering**: Godot 2D Canvas，2.5D presentation only
+- **Physics**: Godot 2D physics for broad collisions; custom data-driven hitboxes/hurtboxes for fighting logic
 
 ## Input & Platform
 
-<!-- Written by /setup-engine. Read by /ux-design, /ux-review, /test-setup, /team-ui, and /dev-story -->
-<!-- to scope interaction specs, test helpers, and implementation to the correct input methods. -->
-
-- **Target Platforms**: [TO BE CONFIGURED — e.g., PC, Console, Mobile, Web]
-- **Input Methods**: [TO BE CONFIGURED — e.g., Keyboard/Mouse, Gamepad, Touch, Mixed]
-- **Primary Input**: [TO BE CONFIGURED — the dominant input for this game]
-- **Gamepad Support**: [TO BE CONFIGURED — Full / Partial / None]
-- **Touch Support**: [TO BE CONFIGURED — Full / Partial / None]
-- **Platform Notes**: [TO BE CONFIGURED — any platform-specific UX constraints]
+- **Target Platforms**: Web / Browser
+- **Input Methods**: Keyboard
+- **Primary Input**: Keyboard
+- **Gamepad Support**: Partial
+- **Touch Support**: Partial
+- **Platform Notes**: Web MVP is keyboard-single-player first. Test browser focus, fullscreen, audio unlock, and input latency early. No hover-only UI. 本地双人、手柄优先和移动触控都延后。
 
 ## Naming Conventions
 
-- **Classes**: [TO BE CONFIGURED]
-- **Variables**: [TO BE CONFIGURED]
-- **Signals/Events**: [TO BE CONFIGURED]
-- **Files**: [TO BE CONFIGURED]
-- **Scenes/Prefabs**: [TO BE CONFIGURED]
-- **Constants**: [TO BE CONFIGURED]
+- **Classes**: PascalCase (e.g., `PlayerController`)
+- **Variables**: snake_case (e.g., `move_speed`)
+- **Signals/Events**: snake_case past tense (e.g., `health_changed`)
+- **Files**: snake_case matching class (e.g., `player_controller.gd`)
+- **Scenes/Prefabs**: PascalCase matching root node (e.g., `PlayerController.tscn`)
+- **Constants**: UPPER_SNAKE_CASE (e.g., `MAX_HEALTH`)
 
 ## Performance Budgets
 
-- **Target Framerate**: [TO BE CONFIGURED]
-- **Frame Budget**: [TO BE CONFIGURED]
-- **Draw Calls**: [TO BE CONFIGURED]
-- **Memory Ceiling**: [TO BE CONFIGURED]
+- **Target Framerate**: 60fps
+- **Frame Budget**: 16.67ms
+- **Draw Calls**: Keep low for Web; minimize layered VFX, oversized sprites, and unnecessary CanvasItem overlap
+- **Memory Ceiling**: Keep Web build lightweight; prefer small sprite sheets, compressed textures, and minimal loaded scenes for MVP
 
 ## Testing
 
-- **Framework**: [TO BE CONFIGURED]
-- **Minimum Coverage**: [TO BE CONFIGURED]
-- **Required Tests**: Balance formulas, gameplay systems, networking (if applicable)
+- **Framework**: GdUnit4
+- **Minimum Coverage**: Critical gameplay formulas and deterministic state transitions must be covered before story completion
+- **Required Tests**: Input buffering, combat state transitions, hitbox/hurtbox rules, damage/hitstun formulas, guard/block rules, gas/energy meter rules, simple CPU behavior
 
 ## Forbidden Patterns
 
-<!-- Add patterns that should never appear in this project's codebase -->
 - [None configured yet — add as architectural decisions are made]
 
 ## Allowed Libraries / Addons
 
-<!-- Add approved third-party dependencies here -->
 - [None configured yet — add as dependencies are approved]
 
 ## Architecture Decisions Log
 
-<!-- Quick reference linking to full ADRs in docs/architecture/ -->
 - [No ADRs yet — use /architecture-decision to create one]
 
 ## Engine Specialists
 
-<!-- Written by /setup-engine when engine is configured. -->
-<!-- Read by /code-review, /architecture-decision, /architecture-review, and team skills -->
-<!-- to know which specialist to spawn for engine-specific validation. -->
-
-- **Primary**: [TO BE CONFIGURED — run /setup-engine]
-- **Language/Code Specialist**: [TO BE CONFIGURED]
-- **Shader Specialist**: [TO BE CONFIGURED]
-- **UI Specialist**: [TO BE CONFIGURED]
-- **Additional Specialists**: [TO BE CONFIGURED]
-- **Routing Notes**: [TO BE CONFIGURED]
+- **Primary**: godot-specialist
+- **Language/Code Specialist**: godot-gdscript-specialist (all .gd files)
+- **Shader Specialist**: godot-shader-specialist (.gdshader files, VisualShader resources)
+- **UI Specialist**: godot-specialist (no dedicated UI specialist — primary covers all UI)
+- **Additional Specialists**: godot-gdextension-specialist (GDExtension / native C++ bindings only)
+- **Routing Notes**: Invoke primary for architecture decisions, ADR validation, and cross-cutting code review. Invoke GDScript specialist for code quality, signal architecture, static typing enforcement, and GDScript idioms. Invoke shader specialist for material design and shader code. Invoke GDExtension specialist only when native extensions are involved.
 
 ### File Extension Routing
 
-<!-- Skills use this table to select the right specialist per file type. -->
-<!-- If a row says [TO BE CONFIGURED], fall back to Primary for that file type. -->
-
 | File Extension / Type | Specialist to Spawn |
 |-----------------------|---------------------|
-| Game code (primary language) | [TO BE CONFIGURED] |
-| Shader / material files | [TO BE CONFIGURED] |
-| UI / screen files | [TO BE CONFIGURED] |
-| Scene / prefab / level files | [TO BE CONFIGURED] |
-| Native extension / plugin files | [TO BE CONFIGURED] |
-| General architecture review | Primary |
+| Game code (.gd files) | godot-gdscript-specialist |
+| Shader / material files (.gdshader, VisualShader) | godot-shader-specialist |
+| UI / screen files (Control nodes, CanvasLayer) | godot-specialist |
+| Scene / prefab / level files (.tscn, .tres) | godot-specialist |
+| Native extension / plugin files (.gdextension, C++) | godot-gdextension-specialist |
+| General architecture review | godot-specialist |
