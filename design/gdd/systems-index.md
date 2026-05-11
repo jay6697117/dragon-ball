@@ -67,7 +67,7 @@ MVP 只验证一个核心假设：玩家能否通过读招、防御、抓硬直�
 
 | # | System Name | Category | Priority | Status | Design Doc | Depends On |
 |---|-------------|----------|----------|--------|------------|------------|
-| 1 | 固定逻辑步进与战斗运行时 | Foundation | MVP | Revised — Pending Fresh Re-review | design/gdd/fixed-logic-runtime.md | — |
+| 1 | 固定逻辑步进与战斗运行时 | Foundation | MVP | Revised after fifth full review — Pending Fresh Re-review | design/gdd/fixed-logic-runtime.md | — |
 | 2 | 输入映射与输入缓冲 | Foundation | MVP | Not Started | design/gdd/input-buffering.md | 1 |
 | 3 | 角色数据与招式数据 | Foundation | MVP | Not Started | design/gdd/character-move-data.md | — |
 | 4 | 动画帧数据与资产元数据 | Foundation | MVP | Not Started | design/gdd/animation-frame-metadata.md | 3, 25 |

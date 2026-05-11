@@ -35,3 +35,12 @@ Blocking items: 12 | Recommended: 4
 Summary: The fourth full re-review found the runtime direction still creatively sound but structurally unsafe for implementation: catch-up could hide player-readable causes, presentation delivery was not strong enough to prove the player saw key facts, AI/dummy fairness was not enforceable, and QA/Web budgets were not measurable enough. The GDD was revised the same day to add pre-result catch-up fairness gates, ack-gated RuntimePresentationPacket delivery, presented-running-tick AI reaction age, batch-staged command validation, versioned QA schemas, measurable Web profiling, ADR implementation gates, and registry/index consistency fixes.
 Prior verdict resolved: No — third-review blockers were narrowed but escalated into a structural MAJOR REVISION verdict.
 Revision status: Revised 2026-05-11; pending fresh re-review
+
+## Review — 2026-05-11 — Verdict: MAJOR REVISION NEEDED
+
+Scope signal: XL
+Specialists: game-designer, systems-designer, qa-lead, godot-specialist, performance-analyst, gameplay-programmer, ux-designer, ui-programmer, audio-director, ai-programmer, creative-director
+Blocking items: 8 | Recommended: 4
+Summary: The fifth full re-review found the runtime foundation still creatively sound but not yet implementation-safe: `presented_running_tick_index`, presentation display-watermark semantics, CPU/training-dummy fairness, catch-up preflight/precedence, event and packet idempotency, Web budgets, QA criteria, and ADR gates needed stronger contracts. The GDD was revised the same day to define display-watermark ack, MVP CPU/dummy deterministic fairness, small-step Web catch-up, corrected catch-up stop precedence, idempotent packet/audio/UI contracts, measurable Web budgets, QA schemas, ADR gates, and registry consistency.
+Prior verdict resolved: No — fourth-review blockers were narrowed, but fifth review still found structural implementation gaps.
+Revision status: Revised 2026-05-11; pending fresh re-review

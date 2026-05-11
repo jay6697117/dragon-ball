@@ -2,15 +2,15 @@
 
 ## Current Task
 
-Revising `fixed-logic-runtime` GDD for 《星核斗魂》 after full design review.
+Revising `fixed-logic-runtime` GDD for 《星核斗魂》 after the fifth full design review.
 
 ## Status
 
-`design/gdd/fixed-logic-runtime.md` was re-reviewed a third time with full specialist coverage. Verdict: NEEDS REVISION. Blocking items have been revised in the GDD, and `design/registry/entities.yaml` has been synced with revised event ordering, catch-up stop precedence, AI decision-age formula, AI/Web budget constants, and Web-safe trace/presentation bounds.
+`design/gdd/fixed-logic-runtime.md` was re-reviewed with full specialist coverage after the prior fourth-review revision. Verdict: MAJOR REVISION NEEDED. The fifth-review blockers have now been revised in the GDD, and `design/registry/entities.yaml` has been synced with the revised catch-up defaults, display-watermark presentation ack semantics, `presented_running_tick_index`, and Web performance budgets.
 
 ## Current Section
 
-Third-review revision complete — post-revision closing flow pending user choice.
+Fifth-review revision complete — systems index and review log updated; user chose fresh-session re-review next.
 
 ## Completed Sections
 
@@ -28,39 +28,41 @@ Third-review revision complete — post-revision closing flow pending user choic
 
 ## Completed This Session
 
-- Completed and signed off `design/art/art-bible.md`.
-- Confirmed systems enumeration for 30 systems.
-- Confirmed dependency layers.
-- Accepted TD-SYSTEM-BOUNDARY concerns:
-  - Combat event contract belongs in runtime/state-machine boundary.
-  - Combat data loading and validation belongs in character/move data and animation metadata boundary.
-  - Gas projectile, simple CPU, and debug display must remain minimal for MVP.
-- Accepted PR-SCOPE concerns:
-  - 4-week solo MVP is realistic only with minimal playable rules.
-  - Training challenges, local versus, multiple characters, and beam clash remain later-scope.
-- Wrote `design/gdd/systems-index.md`.
-- Authored `design/gdd/fixed-logic-runtime.md`.
-- Ran CD-GDD-ALIGN for `fixed-logic-runtime`; verdict: APPROVE.
-- Registered fixed-runtime constants and cross-system formulas in `design/registry/entities.yaml`.
-- Updated `design/gdd/systems-index.md` to mark `fixed-logic-runtime` as authored, then later revised it to `Revised — Pending Re-review` after full design review.
-- Ran full `/design-review design/gdd/fixed-logic-runtime.md`; verdict: NEEDS REVISION.
-- Ran fresh full re-review for `fixed-logic-runtime`; verdict remained NEEDS REVISION, with narrower blockers around recovery-pause semantics, command/AI snapshots, event/state ordering, UI/audio delivery, trace bounds, and AC triage.
-- Revised `fixed-logic-runtime` blockers: tick terminology, hitstop tick semantics, catch-up fairness/wall-clock guard, command entry schema, AI observation snapshots, snapshot/event/UI/trace contracts, QA acceptance criteria, and MVP/ADR/hardening acceptance tiers.
-- Updated `design/registry/entities.yaml` with revised event ordering plus missing runtime state, catch-up guard, catch-up stop reason, and trace-bound formulas/constants.
-- Created `design/gdd/reviews/fixed-logic-runtime-review-log.md` with the first review summary and revision status.
-- Ran third full `/design-review design/gdd/fixed-logic-runtime.md`; verdict: NEEDS REVISION, focused on AC tiering, total ordering, catch-up/recovery precedence, command/AI fairness, QA schemas, Web budgets, and presentation delivery idempotency.
-- Revised third-review blockers in `fixed-logic-runtime`: AC-FLR-42 through AC-FLR-74, catch-up event tiers, deterministic stop reason precedence, AI/dummy observation fairness, command rejection schema, atomic presentation packet delivery, stale generation invalidation, Web budgets, and transition-matrix QA coverage.
-- Synced `design/registry/entities.yaml` with `decision_age_ticks`, `min_ai_decision_age_ticks`, Web performance/memory constants, `phase_order_namespace_ordinal`, and catch-up stop reason precedence.
+- Ran full `/design-review design/gdd/fixed-logic-runtime.md` after the fourth-review revision.
+- Specialist review returned MAJOR REVISION NEEDED, with blockers around `presented_running_tick_index`, presentation ack semantics, CPU/dummy fairness, catch-up preflight, event/packet idempotency, Web budgets, QA ACs, and ADR gates.
+- User approved these revision decisions:
+  - CPU/dummy fairness is MVP-blocking.
+  - `presentation_ack` means display watermark, not proof the player truly saw or understood the fact.
+  - Web MVP uses small-step catch-up.
+  - Recovery pause, focus restore, and ack wait share a safe “ready to continue” countdown pattern.
+- Revised `design/gdd/fixed-logic-runtime.md`:
+  - Updated header to fifth-review revision pending fresh re-review.
+  - Changed `catch_up_max_ticks` from `6` to `2`.
+  - Changed `catch_up_wall_clock_budget_ms` from `4.0` to `3.0` and included preflight cost.
+  - Changed `runtime_normal_tick_budget_ms` from `2.0` to `1.0`.
+  - Added `presented_running_tick_index` lifecycle formula.
+  - Changed presentation ack to display-watermark semantics with `display_watermark_target`, ack result, visual degradation, and no claim of player perception.
+  - Promoted AC-FLR-65 to MVP-blocking and expanded it to CPU plus training dummy deterministic QA.
+  - Corrected catch-up stop precedence so `none` only applies when no attempt occurs and `completed_backlog` wins once backlog is clear.
+  - Added stronger AI observation, visibility watermark, RNG stream/call-counter, stale-command, projectile-threat, event instance ID, packet ordering, UI one-shot, and audio loop cleanup contracts.
+  - Updated UI/player-facing recovery labels to avoid exposing raw technical enum names.
+- Synced `design/registry/entities.yaml`:
+  - Added `presented_running_tick_index` formula.
+  - Updated `catch_up_max_ticks = 2`.
+  - Updated `catch_up_wall_clock_budget_ms = 3.0`.
+  - Updated `runtime_normal_tick_budget_ms = 1.0`.
+  - Updated deprecated `catch_up_attempt_budget_ms` alias to `3.0`.
+  - Updated `catch_up_stop_reason` expression/notes.
 
 ## Files
 
 - `design/art/art-bible.md` — approved visual identity and asset standards.
 - `design/gdd/game-concept.md` — source concept.
-- `design/gdd/systems-index.md` — current systems index; `fixed-logic-runtime` marked revised and pending re-review.
-- `design/gdd/fixed-logic-runtime.md` — revised first MVP Foundation GDD after third review; pending fresh re-review.
-- `design/registry/entities.yaml` — fixed-runtime formulas/constants registered and updated after third-review revisions.
-- `design/gdd/reviews/fixed-logic-runtime-review-log.md` — third full design-review summary appended; verdict NEEDS REVISION, revised same session.
+- `design/gdd/systems-index.md` — current systems index; `fixed-logic-runtime` remains pending fresh re-review.
+- `design/gdd/fixed-logic-runtime.md` — revised first MVP Foundation GDD after fifth review; pending fresh re-review.
+- `design/registry/entities.yaml` — fixed-runtime formulas/constants synced after fifth-review revisions.
+- `design/gdd/reviews/fixed-logic-runtime-review-log.md` — fifth full review summary appended; pending fresh re-review after revisions.
 
 ## Next
 
-Final next step selected: start a fresh session and run `/design-review design/gdd/fixed-logic-runtime.md` to validate the third-review revisions before moving to `input-buffering`.
+Recommended next step: start a fresh session and run `/design-review design/gdd/fixed-logic-runtime.md` to validate the fifth-review revisions before moving to `input-buffering`.

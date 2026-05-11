@@ -343,8 +343,26 @@ formulas:
       - presentation_ack_required
       - remaining_backlog_ticks
     output_range: ["none", "completed_backlog", "wall_clock_guard", "presentation_ack_guard", "blocking_state", "fairness_guard", "focus_suspended", "invalid_backlog"]
-    expression: "focus_suspended > invalid_backlog > fairness_guard > blocking_state > presentation_ack_guard > wall_clock_guard > completed_backlog > none"
-    notes: "Deterministic precedence for explaining why catch-up completed, stopped before a hidden result, waited for presentation ack, or entered recovery_pause."
+    expression: "focus_suspended > invalid_backlog > none(if not attempted) > fairness_guard > blocking_state > presentation_ack_guard > completed_backlog > wall_clock_guard(if backlog remains)"
+    notes: "Deterministic precedence for explaining why catch-up completed, stopped before a hidden result, waited for display-watermark ack, or entered recovery_pause. Revised from the earlier ordering so completed_backlog cannot lose to wall_clock_guard after backlog is already clear."
+    added: 2026-05-11
+    revised: 2026-05-11
+  - name: presented_running_tick_index
+    status: active
+    source: design/gdd/fixed-logic-runtime.md
+    referenced_by:
+      - design/gdd/fixed-logic-runtime.md
+      - design/gdd/simple-scripted-cpu.md
+      - design/gdd/training-dummy.md
+      - design/gdd/combat-hud-feedback.md
+      - design/gdd/debug-tuning-display.md
+    variables:
+      - presented_running_tick_index_current
+      - next_unpresented_running_tick_index
+      - display_watermark_result
+    output_range: [0, "unbounded"]
+    expression: "advance by 1 only when the next running tick reaches display watermark or explicit visual degradation; otherwise hold current value"
+    notes: "Defines the player-visible running-time watermark used by CPU/dummy fairness, catch-up visibility, HUD/debug display, and decision_age_ticks. It is monotonic and advances only in running-tick order."
     added: 2026-05-11
     revised: 2026-05-11
   - name: decision_age_ticks
@@ -422,10 +440,11 @@ constants:
       - design/gdd/web-platform-shell.md
       - design/gdd/pause-basic-menu.md
       - design/gdd/debug-tuning-display.md
-    value: 6
+    value: 2
     unit: ticks
     added: 2026-05-11
-    revised: ""
+    revised: 2026-05-11
+    notes: "Changed from 6 to 2 in the fifth fixed-runtime revision to favor small-step Web catch-up and reduce hidden long-frame risk."
   - name: catch_up_wall_clock_budget_ms
     status: active
     source: design/gdd/fixed-logic-runtime.md
@@ -434,10 +453,11 @@ constants:
       - design/gdd/web-platform-shell.md
       - design/gdd/pause-basic-menu.md
       - design/gdd/debug-tuning-display.md
-    value: 4.0
+    value: 3.0
     unit: milliseconds
     added: 2026-05-11
-    revised: ""
+    revised: 2026-05-11
+    notes: "Changed from 4.0 to 3.0 in the fifth fixed-runtime revision; budget includes catch-up preflight, simulation, packet construction, trace, and delivery metadata."
   - name: trace_window_ticks
     status: active
     source: design/gdd/fixed-logic-runtime.md
@@ -529,10 +549,11 @@ constants:
       - design/gdd/fixed-logic-runtime.md
       - design/gdd/web-platform-shell.md
       - design/gdd/debug-tuning-display.md
-    value: 2.0
+    value: 1.0
     unit: milliseconds
     added: 2026-05-11
-    revised: ""
+    revised: 2026-05-11
+    notes: "Changed from 2.0 to 1.0 in the fifth fixed-runtime revision to preserve browser frame budget with 2-tick catch-up."
   - name: catch_up_attempt_budget_ms
     status: deprecated
     source: design/gdd/fixed-logic-runtime.md
@@ -541,11 +562,11 @@ constants:
       - design/gdd/web-platform-shell.md
       - design/gdd/pause-basic-menu.md
       - design/gdd/debug-tuning-display.md
-    value: 4.0
+    value: 3.0
     unit: milliseconds
     added: 2026-05-11
     revised: 2026-05-11
-    notes: "Deprecated alias; use catch_up_wall_clock_budget_ms for the single catch-up wall-clock guard and profiling budget."
+    notes: "Deprecated alias; use catch_up_wall_clock_budget_ms for the single catch-up wall-clock guard and profiling budget. Alias value follows the revised 3.0 ms budget."
   - name: max_single_frame_stall_ms
     status: active
     source: design/gdd/fixed-logic-runtime.md
