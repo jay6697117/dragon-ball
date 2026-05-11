@@ -37,7 +37,7 @@
 #   Each entry: name, status, source, referenced_by[], attributes{}, added, revised
 
 version: 1
-last_updated: ""
+last_updated: "2026-05-11"
 
 # ─── ENTITIES ────────────────────────────────────────────────────────────────
 # Named game-world objects: enemies, NPCs, characters, factions, bosses.
@@ -106,7 +106,188 @@ items: []
 #   output_range[min, max], added
 # Optional: expression (the actual formula), notes
 
-formulas: []
+formulas:
+  - name: combat_tick_duration_seconds
+    status: active
+    source: design/gdd/fixed-logic-runtime.md
+    referenced_by:
+      - design/gdd/fixed-logic-runtime.md
+      - design/gdd/input-buffering.md
+      - design/gdd/health-damage-round-rules.md
+      - design/gdd/debug-tuning-display.md
+    variables:
+      - combat_ticks_per_second
+    output_range: [0.008333, 0.033334]
+    expression: "1 / combat_ticks_per_second"
+    notes: "Output range reflects MVP safe tick-rate range 30-120 ticks/sec."
+    added: 2026-05-11
+    revised: ""
+  - name: seconds_to_combat_ticks
+    status: active
+    source: design/gdd/fixed-logic-runtime.md
+    referenced_by:
+      - design/gdd/fixed-logic-runtime.md
+      - design/gdd/input-buffering.md
+      - design/gdd/character-move-data.md
+      - design/gdd/animation-frame-metadata.md
+      - design/gdd/hitstop-stun-windows.md
+      - design/gdd/debug-tuning-display.md
+    variables:
+      - duration_seconds
+      - combat_ticks_per_second
+    output_range: [0, "unbounded"]
+    expression: "max(0, ceil(duration_seconds * combat_ticks_per_second))"
+    notes: "Positive second-based durations convert upward so gameplay windows are not shortened; negative durations clamp to 0."
+    added: 2026-05-11
+    revised: ""
+  - name: next_committed_tick_index
+    status: active
+    source: design/gdd/fixed-logic-runtime.md
+    referenced_by:
+      - design/gdd/fixed-logic-runtime.md
+      - design/gdd/input-buffering.md
+      - design/gdd/round-flow-restart.md
+      - design/gdd/combat-hud-feedback.md
+      - design/gdd/debug-tuning-display.md
+    variables:
+      - current_committed_tick_index
+    output_range: [1, "unbounded"]
+    expression: "current_committed_tick_index + 1"
+    notes: "Tick 0 is the initial snapshot; first gameplay tick is 1."
+    added: 2026-05-11
+    revised: ""
+  - name: elapsed_running_ticks
+    status: active
+    source: design/gdd/fixed-logic-runtime.md
+    referenced_by:
+      - design/gdd/fixed-logic-runtime.md
+      - design/gdd/health-damage-round-rules.md
+      - design/gdd/combat-hud-feedback.md
+      - design/gdd/debug-tuning-display.md
+    variables:
+      - running_tick_flag_i
+      - committed_tick_count
+    output_range: [0, "committed_tick_count"]
+    expression: "sum(running_tick_flag_i for i = 1 to committed_tick_count)"
+    notes: "Counts running ticks only; hitstop ticks increment committed_tick_index but do not increment elapsed running time."
+    added: 2026-05-11
+    revised: ""
+  - name: elapsed_running_time_seconds
+    status: active
+    source: design/gdd/fixed-logic-runtime.md
+    referenced_by:
+      - design/gdd/fixed-logic-runtime.md
+      - design/gdd/health-damage-round-rules.md
+      - design/gdd/combat-hud-feedback.md
+      - design/gdd/debug-tuning-display.md
+    variables:
+      - elapsed_running_ticks
+      - combat_ticks_per_second
+    output_range: [0, "unbounded"]
+    expression: "elapsed_running_ticks / combat_ticks_per_second"
+    notes: "Active round time only; excludes hitstop, pause, focus suspension, countdown, inactive, and round-ended states."
+    added: 2026-05-11
+    revised: ""
+  - name: round_timer_remaining_ticks
+    status: active
+    source: design/gdd/fixed-logic-runtime.md
+    referenced_by:
+      - design/gdd/fixed-logic-runtime.md
+      - design/gdd/health-damage-round-rules.md
+      - design/gdd/round-flow-restart.md
+      - design/gdd/combat-hud-feedback.md
+      - design/gdd/debug-tuning-display.md
+    variables:
+      - round_duration_ticks
+      - elapsed_running_ticks
+    output_range: [0, "round_duration_ticks"]
+    expression: "max(0, round_duration_ticks - elapsed_running_ticks)"
+    notes: "Round timer decreases only during running ticks, not during hitstop or paused/focus states."
+    added: 2026-05-11
+    revised: ""
+  - name: hitstop_remaining_ticks_after_tick
+    status: active
+    source: design/gdd/fixed-logic-runtime.md
+    referenced_by:
+      - design/gdd/fixed-logic-runtime.md
+      - design/gdd/hitstop-stun-windows.md
+      - design/gdd/input-buffering.md
+      - design/gdd/debug-tuning-display.md
+    variables:
+      - hitstop_remaining_ticks_before_tick
+      - hitstop_tick_flag
+    output_range: [0, "hitstop_remaining_ticks_before_tick"]
+    expression: "max(0, hitstop_remaining_ticks_before_tick - hitstop_tick_flag)"
+    notes: "Hitstop ticks increment committed_tick_index but do not decrease hitstun, blockstun, recovery, projectiles, or round timer."
+    added: 2026-05-11
+    revised: ""
+  - name: backlog_tick_count
+    status: active
+    source: design/gdd/fixed-logic-runtime.md
+    referenced_by:
+      - design/gdd/fixed-logic-runtime.md
+      - design/gdd/web-platform-shell.md
+      - design/gdd/pause-basic-menu.md
+      - design/gdd/debug-tuning-display.md
+    variables:
+      - delayed_real_seconds
+      - combat_tick_duration_seconds
+    output_range: [0, "unbounded"]
+    expression: "max(0, floor(max(0, delayed_real_seconds) / combat_tick_duration_seconds))"
+    notes: "Negative platform/clock delay is clamped to 0 before backlog classification."
+    added: 2026-05-11
+    revised: ""
+  - name: runtime_event_sequence_key
+    status: active
+    source: design/gdd/fixed-logic-runtime.md
+    referenced_by:
+      - design/gdd/fixed-logic-runtime.md
+      - design/gdd/combat-hud-feedback.md
+      - design/gdd/readable-combat-vfx.md
+      - design/gdd/combat-audio-feedback.md
+      - design/gdd/debug-tuning-display.md
+      - design/gdd/round-flow-restart.md
+    variables:
+      - round_instance_id
+      - committed_tick_index
+      - tick_phase_order
+      - within_phase_event_index
+    output_range: ["ordered tuple", "ordered tuple"]
+    expression: "(round_instance_id, committed_tick_index, tick_phase_order, within_phase_event_index)"
+    notes: "Used for deterministic event ordering, duplicate handling, and quick-restart separation."
+    added: 2026-05-11
+    revised: ""
+  - name: trace_window_bounds
+    status: active
+    source: design/gdd/fixed-logic-runtime.md
+    referenced_by:
+      - design/gdd/fixed-logic-runtime.md
+      - design/gdd/debug-tuning-display.md
+    variables:
+      - latest_committed_tick_index
+      - trace_window_ticks
+    output_range: [0, "latest_committed_tick_index"]
+    expression: "[max(0, latest_committed_tick_index - trace_window_ticks + 1), latest_committed_tick_index]"
+    notes: "Defines QA/debug trace retention, not formal player replay."
+    added: 2026-05-11
+    revised: ""
+  - name: backlog_classification
+    status: active
+    source: design/gdd/fixed-logic-runtime.md
+    referenced_by:
+      - design/gdd/fixed-logic-runtime.md
+      - design/gdd/web-platform-shell.md
+      - design/gdd/pause-basic-menu.md
+      - design/gdd/debug-tuning-display.md
+    variables:
+      - focus_lost
+      - backlog_tick_count
+      - catch_up_max_ticks
+    output_range: ["focus_suspended", "none", "in_order_catch_up", "recovery_pause"]
+    expression: "focus_suspended if focus_lost else none/in_order_catch_up/recovery_pause by backlog_tick_count and catch_up_max_ticks"
+    notes: "Focus loss wins over backlog catch-up; recovery_pause is a pause reason, not a runtime state."
+    added: 2026-05-11
+    revised: ""
 
 # Example:
 #
@@ -139,7 +320,47 @@ formulas: []
 #
 # Required fields: name, status, source, referenced_by, value, unit, added
 
-constants: []
+constants:
+  - name: combat_ticks_per_second
+    status: active
+    source: design/gdd/fixed-logic-runtime.md
+    referenced_by:
+      - design/gdd/fixed-logic-runtime.md
+      - design/gdd/input-buffering.md
+      - design/gdd/movement-spacing.md
+      - design/gdd/combat-state-machine.md
+      - design/gdd/hitbox-hurtbox.md
+      - design/gdd/health-damage-round-rules.md
+      - design/gdd/hitstop-stun-windows.md
+      - design/gdd/round-flow-restart.md
+      - design/gdd/combat-hud-feedback.md
+      - design/gdd/debug-tuning-display.md
+    value: 60
+    unit: ticks_per_second
+    added: 2026-05-11
+    revised: ""
+  - name: catch_up_max_ticks
+    status: active
+    source: design/gdd/fixed-logic-runtime.md
+    referenced_by:
+      - design/gdd/fixed-logic-runtime.md
+      - design/gdd/web-platform-shell.md
+      - design/gdd/pause-basic-menu.md
+      - design/gdd/debug-tuning-display.md
+    value: 6
+    unit: ticks
+    added: 2026-05-11
+    revised: ""
+  - name: trace_window_ticks
+    status: active
+    source: design/gdd/fixed-logic-runtime.md
+    referenced_by:
+      - design/gdd/fixed-logic-runtime.md
+      - design/gdd/debug-tuning-display.md
+    value: 180
+    unit: ticks
+    added: 2026-05-11
+    revised: ""
 
 # Example:
 #
