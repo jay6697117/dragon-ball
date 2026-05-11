@@ -1,6 +1,6 @@
 # 固定逻辑步进与战斗运行时
 
-> **Status**: Revised — second Design Review NEEDS REVISION blockers addressed; Pending Re-review
+> **Status**: Revised — fourth full Design Review MAJOR REVISION blockers addressed; Pending Re-review
 > **Author**: SteveZhang + Claude Code Game Studios
 > **Last Updated**: 2026-05-11
 > **Implements Pillar**: 读招定胜负；短连招，高回合；气槽辅助，不接管战斗；第一回合必须好玩；热血能量必须可读
@@ -8,7 +8,7 @@
 > **Priority**: MVP
 > **Layer**: Foundation
 > **Creative Director Review (CD-GDD-ALIGN)**: APPROVED 2026-05-11 — 固定逻辑运行时清楚保护“我可以练会”的公平时间基础，并未扩大 MVP 范围；trace/replay 语义继续限定为 QA/debug。
-> **Design Review**: NEEDS REVISION 2026-05-11 twice; revised same day to address recovery-pause semantics, transition snapshots, catch-up guards, command/AI schemas, event ordering, UI/audio delivery, trace bounds, and AC triage; pending fresh re-review.
+> **Design Review**: MAJOR REVISION NEEDED 2026-05-11 on fourth full review; revised same day to restructure catch-up around player-perceived fairness, ack-gated presentation delivery, presented-running-tick AI fairness, command ordering, Web profiling, QA schemas, ADR gates, and cross-file consistency; pending fresh re-review.
 
 ## Overview
 
@@ -49,8 +49,18 @@
 3. **逻辑时间与表现时间分离**  
    committed runtime tick 提交战斗事实；渲染、HUD、VFX、音效、相机和调试显示只读取最近提交的战斗事实并表现它。表现层可以延迟、插值、闪烁、震动或播放特效，但不得修改战斗状态。
 
-4. **combat tick 不允许静默跳过，catch-up 必须公平优先**  
-   如果浏览器短暂掉帧，运行时最多可以按顺序补跑 `catch_up_max_ticks` 内的少量积压 tick，确保逻辑时间连续。补跑同时受 tick 数、`catch_up_wall_clock_budget_ms`、blocking state 和 fairness-stop event 约束；任一 guard 触发时，guard 优先于剩余 backlog。若补跑 tick 产生玩家必须看见的关键事件，运行时可以提交该触发 tick，但必须在继续推进下一枚 combat tick 前进入 `runtime_state = paused`、`state_reason = recovery_pause` 的安全恢复流程。运行时不得丢弃 tick、一次性快进大量 tick，或让战斗在不可见状态下继续推进。本 GDD 默认 `catch_up_max_ticks = 6`，`catch_up_wall_clock_budget_ms = 4.0`；具体 accumulator 精度和 host-frame 集成由 Runtime ADR 验证。
+4. **combat tick 不允许静默跳过，catch-up 必须以玩家已看到的因果为边界**
+   如果浏览器短暂掉帧，运行时最多可以按顺序补跑 `catch_up_max_ticks` 内的少量积压 tick，但只能补跑不会隐藏关键读招因果的 tick。每个 delayed tick 在正式提交前必须先做只读 `catch_up_preflight`：使用已提交 snapshot、确定性招式数据、projectile schedule 和输入快照判断该 tick 是否可能产生必须先给玩家看的关键事实。preflight 不得修改 runtime state、不得生成 combat event、不得改变 RNG；如果无法证明安全，必须按不安全处理。运行时不得丢弃 tick、一次性快进大量 tick，或把命中/防御/确反窗口/气弹威胁这类结果藏在不可见补跑里。本 GDD 默认 `catch_up_max_ticks = 6`，`catch_up_wall_clock_budget_ms = 4.0`；具体 accumulator 精度和 host-frame 集成由 Runtime Scheduler ADR 验证。
+
+   Catch-up fairness 使用三层事件策略：
+
+   | Tier | Rule | Minimum events / facts |
+   |---|---|---|
+   | `fairness_stop_required` | **暂停在结果前**：如果 delayed tick 的 preflight 发现该 tick 可能在玩家未看到原因前改变命中、防御、确反、KO、round end 或可防御/可反击结果，则不得提交该 delayed tick；runtime 停在上一枚已提交 tick，进入 `runtime_state = paused`、`state_reason = recovery_pause`，并要求 presentation 显示恢复原因后再从该 delayed tick 重新开始。 | 将进入 active threat 的攻击或 projectile、`punish_window_opened`、`projectile_threat_entered`、可能导致 `hit_landed` / `blocked` / `burst_started` / `ko_started` / `round_ended` 的未展示原因、会在未展示前改变可反击/可防御结果的 active threat。 |
+   | `presentation_must_show` | 可以提交当前 delayed tick，但必须在 packet 中标记为 ack-gated；至少一个视觉消费者（HUD 状态提示、VFX 可读提示或 UI overlay）必须确认展示或明确降级，后续依赖该事实的 AI/木桩决策和新的 catch-up tick 才能继续。audio 不能单独满足 must-show ack。 | `active_frame_started` 且不会在同 tick 结算 hit/block、`punish_window_closed`、`control_resumed`、`projectile_spawned`、`projectile_threat_changed`、关键气槽/爆气可用性变化。 |
+   | `compressible_phase` | 可以继续 catch-up；表现层可压缩展示，但事件仍完整保留，且不得被压缩成会改变玩家理解的假因果。 | 普通 `startup_started`、`recovery_started`、非威胁 spacing/facing 更新、debug-only event。 |
+
+   Runtime 必须记录 `recovery_pause_count_per_round`、`focus_suspend_count_per_round` 和 `presentation_ack_wait_count_per_round`。MVP QA 默认阈值为：单回合 `recovery_pause_count_per_round > 2` 触发 warning，`> 4` 视为 Web 体验失败，需要 Runtime ADR 或性能调参处理。
 
 5. **所有战斗状态变化只在 tick 边界提交**  
    输入、移动、状态切换、hitbox/hurtbox、命中、格挡、伤害、硬直、气槽、KO 和 round end 都必须在 tick 的固定结算流程中提交。任何系统不得在 tick 中途直接修改已提交的战斗结果。
@@ -140,37 +150,53 @@
     | Command field | Required values / type | Rule |
     |---|---|---|
     | `round_instance_id` | current round id | 必须匹配当前 round；旧 round command 拒绝。 |
-    | `command_source` | `player` / `training_dummy` / `simple_cpu` / `qa_fixture` | 不允许隐式来源。 |
+    | `command_source` | `player` / `training_dummy` / `simple_cpu` / `qa_fixture` | 不允许隐式来源；`qa_fixture` 只允许 test/dev build。 |
+    | `command_source_ordinal` | `0` / `10` / `20` / `90` | 显式排序值；不得从字符串、Godot node order 或 signal order 推导。 |
     | `source_actor_id` | stable actor id | 必须匹配可行动 actor。 |
     | `command_id` | unique id within source + round | 重复 command id 幂等拒绝或去重。 |
-    | `command_sequence_key` | `(round_instance_id, target_committed_tick_index, source_actor_id, source_priority, command_priority, command_id)` | 同 tick 多命令按此稳定排序，不依赖 Godot signal/node/array 顺序。 |
-    | `target_committed_tick_index` | integer `>= current_committed_tick_index + 1` unless queued by input-buffer rules | 不允许修改当前已开始或已提交 tick。 |
-    | `input_snapshot_id` | player-only input snapshot id | 仅玩家输入可用；CPU/木桩不能用它替代观察快照。 |
-    | `based_on_committed_tick_index` | non-player required integer `< target_committed_tick_index` | CPU/木桩必须基于已提交观察；MVP 默认 `target_committed_tick_index = based_on_committed_tick_index + 1`，除非后续 AI GDD 定义延迟队列。 |
     | `command_type` | `movement` / `guard` / `light_attack` / `heavy_attack` / `projectile` / `burst` / `menu_runtime_request` / `qa_fixture` | 非法 enum 拒绝。 |
+    | `command_type_ordinal` | explicit int ordinal | MVP 默认见下文；同 tick 多命令不得依赖 enum 字符串排序。 |
+    | `command_sequence_key` | `(round_instance_id, target_committed_tick_index, command_source_ordinal, source_actor_id, command_type_ordinal, command_id)` | 同 tick 多命令按此稳定排序，不依赖 Godot signal/node/array 顺序。 |
+    | `target_committed_tick_index` | integer `>= current_committed_tick_index + 1` unless queued by input-buffer rules | 不允许修改当前已开始或已提交 tick。 |
+    | `target_presented_running_tick_index` | non-player required integer | CPU/木桩命令目标对应的已呈现 running-time index；hitstop、pause、focus 和未 ack 的 catch-up tick 不计入。 |
+    | `input_snapshot_id` | player-only input snapshot id | 仅玩家输入可用；CPU/木桩不能用它替代观察快照。 |
+    | `based_on_committed_tick_index` | non-player required committed tick id | CPU/木桩观察来源的 committed tick；用于定位 snapshot，不单独证明反应延迟。 |
+    | `based_on_presented_running_tick_index` | non-player required integer `<= target_presented_running_tick_index - min_ai_decision_age_ticks` | CPU/木桩最小反应延迟只按玩家已看到的 running ticks 计算；MVP QA/default `min_ai_decision_age_ticks = 6`。 |
+    | `observation_snapshot_id` / `observation_snapshot_hash` | non-player required | 必须匹配 retained visible-only observation snapshot。 |
+    | `visibility_ack_generation_id` | non-player required | 证明该 observation 之前的 must-show facts 已完成 ack 或明确降级。 |
     | `pressed_or_held` | `pressed` / `held` / `released` / `axis` / `scripted` | 输入语义必须显式。 |
     | `runtime_state_at_capture` | runtime state enum | 不符合当前 input policy 的 command 拒绝。 |
 
-    最小 rejected-command payload 必须表达：`command_id`、`command_source`、`source_actor_id`、`target_committed_tick_index`、`runtime_state_at_capture`、`command_acceptance_result`、`rejection_reason`、`dedupe_or_supersede_reason`。CPU 和木桩只能基于 `AIObservationSnapshot` 生成命令，不能读取同 tick 尚未提交的玩家输入、输入缓冲、事件总线、debug trace、UI payload、live Godot node 或半更新状态。
+    最小 rejected-command payload 必须表达：`command_id`、`command_source`、`command_source_ordinal`、`source_actor_id`、`target_committed_tick_index`、`target_presented_running_tick_index`、`runtime_state_at_capture`、`command_acceptance_result`、`rejection_reason`、`dedupe_or_supersede_reason`。`rejection_reason` 最小 enum 为：`stale_round`、`duplicate_command_id`、`target_tick_already_processing`、`invalid_source_actor`、`invalid_runtime_state`、`missing_observation_snapshot`、`observation_tick_mismatch`、`observation_hash_mismatch`、`duplicate_observation_snapshot_id`、`future_observation`、`decision_age_too_young`、`stale_due_to_runtime_interruption`、`hidden_state_source`、`conflicting_same_actor_command`、`invalid_enum`、`disallowed_by_input_policy`、`qa_fixture_disallowed_in_build`、`state_machine_rejected`。CPU 和木桩只能基于 `AIObservationSnapshot` 生成命令，不能读取同 tick 尚未提交的玩家输入、输入缓冲、事件总线、debug trace、UI payload、live Godot node 或半更新状态。
 
-    `AIObservationSnapshot` 是 CPU/木桩唯一可见战斗事实，最小字段为：`round_instance_id`、`committed_tick_index`、`runtime_state`、双方 actor 的 stable id / position / facing / visible action state / visible action phase、HUD 可见的 health / energy / timer、粗粒度 projectile facts、可见 round state。它不得包含玩家 raw input、input buffer 内容、command-source metadata、debug-only trace、UI prompt state 或 mutable runtime internals。CPU/木桩 command trace 必须记录 `observation_snapshot_id` 或 hash、`based_on_committed_tick_index`、`decision_age_ticks`、`script_or_config_id`、accept/reject result。
+    Runtime command ordering 必须先 batch-stage 同一 target tick 的全部命令，再按 `command_sequence_key` 验证和提交 accepted set；验证过程中不得因为某个 command 较早处理就暴露半更新状态给后续 command。MVP 默认 `command_source_ordinal` 为：`player = 0`、`training_dummy = 10`、`simple_cpu = 20`、`qa_fixture = 90`。MVP 默认 `command_type_ordinal` 为：`menu_runtime_request = 0`、`burst = 10`、`guard = 20`、`movement = 30`、`light_attack = 40`、`heavy_attack = 50`、`projectile = 60`、`qa_fixture = 90`。这些 ordinal 只用于稳定命令入口和同 actor 冲突处理，不得让玩家、CPU 或木桩在同 tick combat resolution 中获得隐藏胜负偏置；命中/格挡/同时命中仍由固定 hit resolution 规则决定。同一 actor 同一 target tick 默认最多接受一个非 movement combat action；多个冲突 action 必须按明确 supersede 规则处理或全部拒绝并记录 `conflicting_same_actor_command`。
+
+    CPU/木桩决策边界必须是纯 value-copy 接口：`AICommand[] = decide(AIObservationSnapshot value_copy, AIConfig value_copy, AIRngStream deterministic_stream)`。`AIObservationSnapshot` 是 CPU/木桩唯一可见战斗事实，最小字段为：`round_instance_id`、`round_instance_sequence`、`committed_tick_index`、`presented_running_tick_index`、`visibility_ack_generation_id`、`tick_execution_state`、`post_commit_runtime_state`、`runtime_state`、双方 actor 的 stable id / position / facing / visible action state / visible action phase、HUD 可见的 health / energy / timer、粗粒度 projectile facts、可见 round state、`observation_snapshot_id`、`observation_snapshot_hash`。它不得包含玩家 raw input、input buffer 内容、command-source metadata、debug-only trace、UI prompt state、live Godot node、mutable runtime internals 或未 ack 的 must-show facts。CPU/木桩 command trace 必须记录 `observation_snapshot_id`、`observation_snapshot_hash`、`based_on_committed_tick_index`、`based_on_presented_running_tick_index`、`target_presented_running_tick_index`、`decision_age_ticks`、`visibility_ack_generation_id`、`script_or_config_id`、`script_or_config_hash`、deterministic RNG seed/call counter if randomness is used、accept/reject result。Runtime 必须拒绝 round id 不匹配、tick 不匹配、hash 不匹配、missing snapshot、duplicate snapshot id、future snapshot、decision age too young、stale due to pause/focus/recovery interruption、QA fixture in gameplay/export build 或来自 hidden state 的 command。
 
 14. **战斗事件是已提交事实，不是请求**  
     每个 committed runtime tick 结束后，运行时发布一个有序事件批次。事件只描述已经发生并提交的战斗事实，例如 `attack_started`、`startup_started`、`active_frame_started`、`recovery_started`、`punish_window_opened`、`punish_window_closed`、`hit_landed`、`blocked`、`whiffed`、`hitstop_started`、`hitstun_started`、`energy_meter_changed`、`burst_started`、`round_ended`。HUD、VFX、音效、相机和调试显示只能消费事件，不能通过事件反向请求改变本 tick 或过去 tick 的战斗结果。
 
-    Event ordering 必须使用带 namespace 的 key：`runtime_event_sequence_key = (round_instance_sequence, committed_tick_index, phase_order_namespace, tick_phase_order, within_phase_event_index)`。`phase_order_namespace` 至少包含 `running_tick_order`、`hitstop_tick_order`、`runtime_state_transition_order`、`debug_trace_order`。`within_phase_event_index` 必须由稳定 tie-breaker 生成：event type priority、source actor id、target actor id、move/projectile id、stable spawn/order id；不得依赖 Godot node order、signal order、render order 或容器插入顺序。
+    Event ordering 必须使用带 namespace ordinal 的 key：`runtime_event_sequence_key = (round_instance_sequence, committed_tick_index, phase_order_namespace_ordinal, tick_phase_order, within_phase_event_index)`。`phase_order_namespace_ordinal` 使用固定 ordinal：`running_tick_order = 10`、`hitstop_tick_order = 20`、`debug_trace_order = 90`。非 combat state transition 不得使用 combat event key；它们只使用 `runtime_state_sequence_key`。`tick_phase_order` 必须使用本 GDD 定义的 running/hitstop phase order 数字；`within_phase_event_index` 必须由稳定 tie-breaker 生成：event type ordinal、source actor stable numeric/order id、target actor stable numeric/order id、move/projectile stable id、stable spawn/order id；不得依赖 Godot node order、signal order、render order 或容器插入顺序。
+
+    MVP 默认 event type ordinal 为：`attack_started = 100`、`startup_started = 110`、`active_frame_started = 120`、`recovery_started = 130`、`punish_window_opened = 140`、`punish_window_closed = 141`、`control_resumed = 150`、`whiffed = 200`、`hit_landed = 210`、`blocked = 220`、`hitstop_started = 230`、`hitstun_started = 240`、`blockstun_started = 250`、`energy_meter_changed = 300`、`burst_ready = 310`、`burst_started = 320`、`ko_started = 400`、`round_ended = 410`。后续 GDD 可追加 ordinal，但不得复用已有 ordinal。
 
     最小 event cardinality：`attack_started` 每次 accepted action 一次；`hit_landed` / `blocked` 每个 resolved hit instance 一次；`whiffed` 每个 whiffed attack window 一次，不是每个空 active tick 一次；`hitstop_started` 每次进入 hitstop 一次；`round_ended` 每个 round instance 一次。Impact/block 音效默认由造成命中/格挡的 running tick 的 `hit_landed` / `blocked` 触发一次；hitstop countdown tick 不得重复触发 impact audio。
 
 15. **snapshot、event、trace 和 UI state 必须有最小可测合同**  
     当前 HUD 数值的权威来源是 committed snapshot summary；event batch 只用于一次性反馈、VFX、音效、HUD pulse、debug log 和因果解释。如果 snapshot 与 event-derived UI 状态冲突，snapshot wins。所有 snapshot、event、trace、UI payload 都必须是 value-copy、stable id、primitive value、不可变记录或只读数据引用；不得把 live Godot `Node`、mutable authority `Resource`、可被消费者改写的 `Array` / `Dictionary` 作为权威对象交给表现、UI、音频或 debug。
 
-    最小 snapshot summary 必须表达：`round_instance_id`、`round_instance_sequence`、`committed_tick_index`、`tick_execution_state`、`post_commit_runtime_state`、`elapsed_running_ticks`、`round_timer_remaining_ticks`、`hitstop_remaining_ticks`、双方 actor 的 stable id / position / facing / current health / max health / current energy / max energy / action state / action phase / action_tick_index、combo summary、KO/round result summary、当前 command-source metadata 引用。  
-    最小 event 必须表达：`runtime_event_sequence_key`、`event_type`、`source_actor_id`、`target_actor_id`、`move_id` 或 `cause`、`result_type`、`position_context`、`idempotency_key`、`delivery_context_id`。  
-    最小 event batch delivery context 必须表达：`delivery_context_id`、`delivery_mode` (`normal` / `catch_up` / `recovery_resume` / `stale_discarded`)、`host_delivery_sequence`、`batch_index_in_delivery`、`batch_count_in_delivery`、`catch_up_tick_count`、`round_instance_id`。重复 delivery 不得重复播放同一 `idempotency_key` 的 HUD pulse、VFX、audio one-shot 或 debug one-shot。  
-    最小 UI runtime state payload 必须表达：`runtime_state`、`state_reason`、`previous_runtime_state` 或 `resume_target_state`、`runtime_state_sequence_key`、`requires_player_confirm`、`combat_input_policy`、`held_input_cleanup_required`、`held_input_cleanup_state`、`countdown_phase`、`backlog_classification`、`round_instance_id`。
+    最小 snapshot summary 必须表达：`round_instance_id`、`round_instance_sequence`、`committed_tick_index`、`presented_running_tick_index`、`tick_execution_state`、`post_commit_runtime_state`、`elapsed_running_ticks`、`round_timer_remaining_ticks`、`hitstop_remaining_ticks`、双方 actor 的 stable id / position / facing / current health / max health / current energy / max energy / action state / action phase / action_tick_index、combo summary、KO/round result summary、当前 command-source metadata 引用。  
+    最小 event 必须表达：`runtime_event_sequence_key`、`event_type`、`event_type_ordinal`、`source_actor_id`、`target_actor_id`、`move_id` 或 `cause`、`result_type`、`position_context`、`idempotency_key`、`delivery_context_id`、`presentation_tier` (`fairness_stop_required` / `presentation_must_show` / `compressible_phase`)。`idempotency_key` 作用域为 `(presentation_generation_id, round_instance_id, runtime_event_sequence_key, event_type, source_actor_id, target_actor_id, move_id_or_cause)`；同一 key 的 one-shot 在同一 generation 内最多播放一次。  
+    最小 event batch delivery context 必须逐批表达，字段为：`delivery_context_id`、`delivery_mode` (`normal` / `catch_up` / `recovery_resume` / `stale_discarded`)、`host_delivery_sequence`、`batch_index_in_delivery`、`batch_count_in_delivery`、`delivery_tick_start`、`delivery_tick_end`、`final_snapshot_committed_tick_index`、`catch_up_tick_count`、`round_instance_id`、`presentation_generation_id`、`contains_must_show`、`contains_fairness_stop_preflight`、`presentation_ack_required`、`presentation_ack_id`、`presentation_priority_reason`。重复 delivery 不得重复播放同一 `idempotency_key` 的 HUD pulse、VFX、audio one-shot 或 debug one-shot。  
+    最小 UI runtime state payload 必须表达：`runtime_state`、`state_reason`、`pause_reason` when applicable、`focus_loss_reason` when applicable、`previous_runtime_state` 或 `resume_target_state`、`runtime_state_sequence_key`、`requires_player_confirm`、`combat_input_policy`、`held_input_cleanup_required`、`held_input_cleanup_state`、`countdown_phase`、`backlog_classification`、`catch_up_stop_reason` when applicable、`presentation_ack_required`、`presentation_ack_id`、`round_instance_id`、`round_instance_sequence`。
 
-    `combat_input_policy` 允许值为：`combat_execute_allowed`、`capture_only`、`direction_pre_read_only`、`menu_only`、`resume_confirm_only`、`blocked_all`。`countdown_phase` 允许值为：`none`、`ready`、`three`、`two`、`one`、`go`、`resume_ready`、`resume_go`。`runtime_state_sequence_key` 用于 pause/focus/resume/restart 等非 combat state transition 的排序和幂等，不得伪装成 combat event。
+    `combat_input_policy` 允许值为：`combat_execute_allowed`、`capture_only`、`direction_pre_read_only`、`menu_only`、`resume_confirm_only`、`blocked_all`。`countdown_phase` 允许值为：`none`、`ready`、`three`、`two`、`one`、`go`、`resume_ready`、`resume_go`。`held_input_cleanup_state` 允许值为：`not_required`、`pending_release`、`released`、`reconfirmed`、`failed_timeout`。`state_reason` / `pause_reason` 最小 enum 为：`player_pause`、`recovery_pause`、`focus_suspended`、`presentation_ack_wait`、`round_end`、`restart_requested`、`exit_requested`。`focus_loss_reason` 最小 enum 为：`page_hidden`、`browser_window_blur`、`canvas_blur`、`keyboard_focus_lost`、`fullscreen_gate`、`audio_unlock_gate`、`internal_menu_focus`、`hover_change`；只有前六项是 unsafe focus loss，`internal_menu_focus` 和 `hover_change` 不得触发 `focus_suspended`。`stale_policy_result` 允许值为：`accepted_current_generation`、`discarded_stale_generation`、`discarded_stale_round`、`discarded_superseded_ack`。`runtime_state_sequence_key` 用于 pause/focus/resume/restart 等非 combat state transition 的排序和幂等，不得伪装成 combat event。
+
+    Runtime 必须向表现层交付一个原子 `RuntimePresentationPacket` 或等价只读包，而不是让 HUD/VFX/audio/debug 分别猜测流顺序。最小 packet 字段为：`presentation_generation_id`、`round_instance_id`、`round_instance_sequence`、`final_snapshot_committed_tick_index`、`delivery_tick_start`、`delivery_tick_end`、`snapshot_summary`、`ordered_event_batches`、`event_batch_delivery_contexts`、`ui_runtime_state_payload`、`runtime_state_transition_records`、`presentation_ack_requirements`、`packet_size_bytes`、`stale_policy_result`。`event_batch_delivery_contexts` 必须与 `ordered_event_batches` 一一对应，不得用单数 context 描述多个 batch。`packet_size_bytes` 使用 Runtime Data Contract ADR 批准的近似序列化口径；超过 `snapshot_summary_max_bytes` 或 `event_batch_max_bytes` 时必须产生 bound diagnostic，且不得截断权威 combat facts。
+
+    “已呈现给玩家”只在以下情况成立：required visual consumer（HUD 状态提示、VFX 可读提示或 UI overlay 至少其一）返回 `presentation_ack_id`，或 packet 明确记录 `ack_degraded_reason` 并显示等价可读降级提示。audio 可以附加 ack，但 audio unlock、静音或浏览器策略导致的 audio-only delivery 不能单独满足 must-show ack。任何依赖 must-show fact 的 CPU/木桩决策、后续 silent catch-up tick 或自动 resume，都必须等待该 ack 或降级记录。
+
+    如果 packet 中的 snapshot、event batch、UI state 或 transition record 不属于当前 `presentation_generation_id`，消费者必须丢弃；quick restart 必须递增 `presentation_generation_id` 并停止/清空旧 HUD pulse、VFX one-shot、audio one-shot/loop group、countdown overlay 和 debug one-shot。
 
 16. **Godot 2D physics 不能作为格斗判定或权威位置来源**  
     Godot 2D physics 可用于场景边界、地面辅助、宽泛碰撞或调试可视化，但 MVP 格斗命中必须由数据驱动 hitbox/hurtbox 在 combat tick 内结算。不得依赖 sprite 边缘、动画可见像素、physics contact callback 或渲染节点顺序决定命中。physics 辅助结果也不得直接写入权威战斗位置；必须先进入 fixed runtime 的移动/边界阶段，再由 committed snapshot 暴露。
@@ -179,6 +205,8 @@
     MVP 运行时必须能记录每 tick 输入快照、关键状态变化和事件批次，用于 QA 复现输入缓冲、状态切换、命中/格挡、硬直、气槽和胜负问题。trace 必须同时受 `trace_window_ticks`、`trace_max_events_per_tick`、`trace_max_payload_bytes_per_entry`、`trace_max_objects_per_tick` 和 `trace_warning_throttle_per_second` 限制，避免 Web 内存和 GC 风险。超限时可以淘汰旧 trace 或 throttle warning，但不得改变权威 combat state 或 event ordering。该 trace 是开发与 QA 工具，不是正式玩家 replay；MVP 不要求 rollback、联网同步、跨版本回放兼容或观战功能。
 
     MVP 默认 trace bounds：`trace_window_ticks = 180`、`trace_max_events_per_tick = 32`、`trace_max_payload_bytes_per_entry = 4096`、`trace_max_objects_per_tick = 64`、`trace_warning_throttle_per_second = 10`。这些是 Web-safe 起点；Runtime ADR 可在浏览器实测后调整，但必须保留同名配置、trace diagnostics 和 QA 覆盖。
+
+    MVP 默认 Web performance / memory budgets：`host_frame_p95_budget_ms = 16.67`、`host_frame_p99_budget_ms = 25.0`、`runtime_normal_tick_budget_ms = 2.0`、`catch_up_wall_clock_budget_ms = 4.0`、`max_single_frame_stall_ms = 50.0`、`trace_total_memory_budget_bytes = 1048576`、`snapshot_summary_max_bytes = 2048`、`event_batch_max_bytes = 8192`、`ai_observation_snapshot_max_bytes = 2048`。`catch_up_attempt_budget_ms` 不再是独立 tuning knob；若 registry 中保留该旧名，只能作为 deprecated alias 指向 `catch_up_wall_clock_budget_ms`。这些预算用于 exported Web profiling 的 QA 起点，不代表最终优化目标；Runtime Profiling ADR 可基于真实浏览器实测调整，但必须解释调整原因并保留自动化或手动证据。
 
 18. **实现方式留给 ADR，不写进本 GDD**  
     本 GDD 只规定战斗时间、结算规则和最小跨系统合同，不规定 Godot 节点结构、Autoload/signal/event bus 选型、`_physics_process` 使用方式、accumulator 实现、日志格式、浮点/定点选择或渲染插值方案。这些属于后续架构决策。
@@ -208,6 +236,24 @@
 7. `inactive`
 
 如果同一 tick 触发多个状态请求，必须按上述优先级决定最终运行状态。例如：命中触发 hitstop 的同一 tick 造成 KO，则进入 `round_ended`，而不是继续停留在 `hitstop`。浏览器失焦优先于普通 pause；如果失焦前已经处于 `paused`，恢复焦点后仍回到 `paused`，不得自动恢复到 `running`。
+
+最小 transition matrix：
+
+| Current state | Request / trigger | Tick commit behavior | Result |
+|---|---|---|---|
+| `running` | valid hit/block requests hitstop only | Commit current running tick | `post_commit_runtime_state = hitstop`; first hitstop countdown starts next committed runtime tick. |
+| `running` | KO or timeout reaches round end | Commit current running tick | `post_commit_runtime_state = round_ended`; no later combat tick for the round. |
+| `running` | focus loss before next tick starts | No new tick | `runtime_state = focus_suspended`; backlog cleared, no catch-up for focus-lost interval. |
+| `running` | pause request before combat action phase | No partial tick | `runtime_state = paused`; `pause_reason = player_pause` or system reason. |
+| `hitstop` | normal hitstop countdown | Commit one hitstop tick | Decrement hitstop only; return to `running` on next boundary if remaining becomes 0 and no higher state applies. |
+| `hitstop` | pause/focus/restart before hitstop tick commit | No hitstop tick committed | Remaining hitstop count is preserved unless restart/round end clears the round. |
+| `hitstop` | round end becomes active from prior committed facts | No further hitstop tick | `runtime_state = round_ended`; final-hit presentation facts remain available in the last packet. |
+| `paused` with `state_reason = recovery_pause` | resume confirmed | No combat tick during confirm | UI consumes confirm, then `countdown_phase = resume_ready -> resume_go`; combat resumes only after `resume_go` completes. |
+| `focus_suspended` | focus restored | No combat tick during restore | Requires focus reason display, held input cleanup/reconfirm, and resume countdown unless returning to existing `paused`. |
+| any active round state | quick restart | No old round tick after request boundary | Clear old round runtime data, increment `round_instance_sequence` and `presentation_generation_id`, emit new tick 0 initial snapshot. |
+| `round_ended` | restart | No old round tick | Enter new round `countdown` with new round instance. |
+
+Recovery countdown minimum flow: `resume_ready` lasts until both conditions are true: at least 0.5 real seconds have elapsed and at least one visual countdown update has been acknowledged by UI/HUD; `resume_go` lasts until both conditions are true: at least 0.2 real seconds have elapsed and at least one visual `go` update has been acknowledged. Render-frame counts may be recorded for diagnostics, but they are not the pass/fail source of truth. During both phases, `combat_input_policy = resume_confirm_only` or `direction_pre_read_only`; attack, guard, projectile, burst, CPU command, and dummy command execution are blocked until the first post-countdown `running` tick. Direction pre-read may be recorded only if input-buffering later allows it; it cannot produce movement before combat resumes.
 
 ### Interactions with Other Systems
 
@@ -369,7 +415,7 @@ The `hitstop_remaining_ticks_after_tick` formula is defined as:
 
 The `runtime_event_sequence_key` formula is defined as:
 
-`runtime_event_sequence_key = (round_instance_sequence, committed_tick_index, phase_order_namespace, tick_phase_order, within_phase_event_index)`
+`runtime_event_sequence_key = (round_instance_sequence, committed_tick_index, phase_order_namespace_ordinal, tick_phase_order, within_phase_event_index)`
 
 **Variables:**
 
@@ -377,13 +423,13 @@ The `runtime_event_sequence_key` formula is defined as:
 |---|---:|---|---|---|
 | Round instance sequence | `round_instance_sequence` | int | `>= 1` | 当前回合实例的单调递增序号；用于排序。`round_instance_id` 可继续作为 equality/idempotency 分区，但不能混用 int/string 参与排序。 |
 | Committed tick index | `committed_tick_index` | int | `>= 1` for runtime events; `0` for initial snapshot/reference events | 事件事实关联的 runtime tick。非 advancing state transition 使用 `runtime_state_sequence_key`，不伪装成 combat event。 |
-| Phase order namespace | `phase_order_namespace` | enum | `running_tick_order` / `hitstop_tick_order` / `runtime_state_transition_order` / `debug_trace_order` | phase order 属于哪个顺序空间。 |
-| Tick phase order | `tick_phase_order` | int | namespace-defined | 对应 namespace 内的阶段编号。 |
+| Phase order namespace ordinal | `phase_order_namespace_ordinal` | int | `10` / `20` / `90` | phase order 属于哪个顺序空间：`10 = running_tick_order`、`20 = hitstop_tick_order`、`90 = debug_trace_order`。非 combat state transition 使用 `runtime_state_sequence_key`，不进入本 key。 |
+| Tick phase order | `tick_phase_order` | int | namespace-defined ordinal | 对应 namespace 内的阶段编号；running tick 使用 Detailed Rules 的 1–10，hitstop tick 使用 1–6，debug trace 使用 90+。 |
 | Within-phase event index | `within_phase_event_index` | int | `>= 0` | 同一 tick、同一 namespace、同一阶段内事件的确定性顺序。 |
 | Runtime event sequence key | `runtime_event_sequence_key` | tuple | `(int, int, enum, int, int)` | 用于事件排序和去重的字典序 key。 |
 
-**Output Range:** 五元组。先按 round sequence 排序，再按 committed tick 排序，再按 namespace 和 phase 排序，最后按阶段内事件顺序排序。  
-**Example:** Event A 的 key 为 `(3, 1200, running_tick_order, 6, 2)`，Event B 的 key 为 `(3, 1200, running_tick_order, 7, 0)`；A 先于 B，因为阶段 `6` 早于阶段 `7`。如果 hitstop debug event 的 key 为 `(3, 1201, hitstop_tick_order, 6, 0)`，它不会误用 running tick phase。快速重开后 `round_instance_sequence = 4` 的事件不会与旧 round 冲突。
+**Output Range:** 五元组。先按 round sequence 排序，再按 committed tick 排序，再按 namespace ordinal 和 phase ordinal 排序，最后按阶段内事件顺序排序。
+**Example:** Event A 的 key 为 `(3, 1200, 10, 6, 2)`，Event B 的 key 为 `(3, 1200, 10, 7, 0)`；A 先于 B，因为阶段 `6` 早于阶段 `7`。如果 hitstop debug event 的 key 为 `(3, 1201, 20, 6, 0)`，它不会误用 running tick phase。快速重开后 `round_instance_sequence = 4` 的事件不会与旧 round 冲突。
 
 ### Runtime State Sequence Key
 
@@ -479,11 +525,55 @@ The `catch_up_wall_clock_guard_exceeded` formula is defined as:
 
 ### Catch-up Stop Reason
 
-The `catch_up_stop_reason` output is defined as one of:
+The `catch_up_stop_reason` formula is defined by precedence:
 
-`none | completed_backlog | blocking_state | wall_clock_guard | fairness_guard | focus_suspended | invalid_backlog`
+```text
+catch_up_stop_reason =
+  focus_suspended, if focus_lost = true
+  invalid_backlog, if backlog_tick_count < 0 or backlog_tick_count > catch_up_max_ticks before catch-up starts
+  fairness_guard, if catch_up_preflight_required = true before the delayed tick commits
+  blocking_state, if a committed catch-up tick ends in round_ended, focus_suspended, paused, or hitstop
+  presentation_ack_guard, if presentation_ack_required = true after a committed catch-up tick
+  wall_clock_guard, if catch_up_wall_clock_guard_exceeded = true and no higher-priority fairness/blocking/ack guard applies
+  completed_backlog, if remaining_backlog_ticks = 0
+  none, if catch_up_attempted = false
+```
 
-**Output Range:** 上述 enum 之一。每次 catch-up 尝试必须 trace：`backlog_tick_count`、`catch_up_ticks_committed`、`remaining_backlog_ticks`、`catch_up_stop_reason`，以及 fairness guard 触发时的 `blocked_transition_type` 和 tick id。
+**Variables:**
+
+| Variable | Symbol | Type | Range | Description |
+|---|---:|---|---|---|
+| Catch-up attempted | `catch_up_attempted` | bool | `{true, false}` | 本 host update 是否实际尝试 catch-up；用于让 `none` 可测。 |
+| Focus lost | `focus_lost` | bool | `{true, false}` | 是否发生 unsafe focus loss。 |
+| Backlog tick count | `backlog_tick_count` | int | `>= 0` after validation | catch-up 开始前的积压 tick 数；负数归为 invalid/debug anomaly。 |
+| Catch-up max ticks | `catch_up_max_ticks` | int | MVP `2–8`; debug may use `0` | 允许 silent catch-up 的最大 tick 数。 |
+| Blocking state reached | `blocking_state_reached` | bool | `{true, false}` | 已提交 catch-up tick 是否进入 `round_ended`、`focus_suspended`、`paused` 或 `hitstop`。 |
+| Wall-clock guard exceeded | `catch_up_wall_clock_guard_exceeded` | bool | `{true, false}` | catch-up runtime work 是否达到 wall-clock budget。 |
+| Catch-up preflight required | `catch_up_preflight_required` | bool | `{true, false}` | delayed tick 正式提交前是否发现会隐藏关键读招因果。 |
+| Presentation ack required | `presentation_ack_required` | bool | `{true, false}` | 已提交 catch-up packet 是否含有必须等待视觉 ack 的 must-show fact。 |
+| Remaining backlog ticks | `remaining_backlog_ticks` | int | `>= 0` | 本次 catch-up 停止时仍未处理的 backlog tick 数。 |
+
+**Output Range:** `none | completed_backlog | wall_clock_guard | presentation_ack_guard | blocking_state | fairness_guard | focus_suspended | invalid_backlog`。每次 catch-up 尝试必须 trace：`catch_up_attempt_id`、`catch_up_attempted`、`backlog_tick_count`、`catch_up_ticks_committed`、`remaining_backlog_ticks`、`catch_up_stop_reason`、`blocked_transition_type`、`presentation_ack_id` when applicable、触发 tick id、以及是否进入 `recovery_pause`。
+
+**Combined-trigger rule:** 如果 catch-up preflight 发现 delayed tick 会在未展示前产生 hit/block、hitstop 或 KO，则该 delayed tick 不提交，`catch_up_stop_reason = fairness_guard`，runtime 停在上一枚已提交 tick 并进入 `paused` / `recovery_pause`。如果一个已经安全提交的 catch-up tick 后续进入 `round_ended` 或 `hitstop`，则 `catch_up_stop_reason = blocking_state`。只有在没有更高优先级 blocking state 时，`presentation_ack_guard` 或 `wall_clock_guard` 才把 runtime 转入等待 ack 或 `recovery_pause`。
+
+### Decision Age Ticks
+
+The `decision_age_ticks` formula is defined as:
+
+`decision_age_ticks = target_presented_running_tick_index - based_on_presented_running_tick_index`
+
+**Variables:**
+
+| Variable | Symbol | Type | Range | Description |
+|---|---:|---|---|---|
+| Target presented running tick index | `target_presented_running_tick_index` | int | `>= 0` | CPU/木桩 command 目标 tick 对应的玩家已看到 running-time index。 |
+| Based-on presented running tick index | `based_on_presented_running_tick_index` | int | `>= 0` and `< target_presented_running_tick_index` | CPU/木桩观察快照最后确认给玩家看到的 running-time index。 |
+| Minimum AI decision age ticks | `min_ai_decision_age_ticks` | int | MVP default `6`; safe `3–12` | CPU/木桩最小可见反应延迟，只按已呈现 running ticks 计算。 |
+| Decision age ticks | `decision_age_ticks` | int | `>= min_ai_decision_age_ticks` for accepted non-player commands | 决策从玩家已看到的观察到目标执行间隔了多少 presented running ticks。 |
+
+**Output Range:** 非负整数；低于 `min_ai_decision_age_ticks` 的 CPU/木桩 command 必须拒绝并记录 `rejection_reason = decision_age_too_young`，除非明确 QA fixture override。hitstop、pause、focus suspension、recovery pause、unacked catch-up presentation 不增加本公式的年龄。
+**Example:** `target_presented_running_tick_index = 106`，`based_on_presented_running_tick_index = 100`，则 `decision_age_ticks = 6`，满足 MVP 默认最小反应延迟。
 
 ### Explicit Non-Ownership
 
@@ -511,7 +601,21 @@ The `catch_up_stop_reason` output is defined as one of:
 |---|---|---|---|
 | `combat_ticks_per_second` | constant | `60` ticks/second | 所有战斗、输入、移动、HUD、debug trace 和测试必须共享同一 tick rate。 |
 | `catch_up_max_ticks` | constant | `6` ticks | runtime、QA 和浏览器恢复行为需要共享阈值。 |
+| `catch_up_wall_clock_budget_ms` | constant | `4.0` ms | catch-up wall-clock guard 需要可测默认预算。 |
 | `trace_window_ticks` | constant | `180` ticks | QA/debug trace 需要统一保留窗口。 |
+| `trace_max_events_per_tick` | constant | `32` events | QA/debug trace 需要事件数量上限。 |
+| `trace_max_payload_bytes_per_entry` | constant | `4096` bytes | QA/debug trace 需要 payload 上限。 |
+| `trace_max_objects_per_tick` | constant | `64` objects | QA/debug trace 需要对象数量上限。 |
+| `trace_warning_throttle_per_second` | constant | `10` warnings/sec | warning 输出需要节流。 |
+| `min_ai_decision_age_ticks` | constant | `6` presented running ticks | CPU/木桩不能用 hitstop、pause、focus 或未展示 catch-up tick 伪装公平反应。 |
+| `host_frame_p95_budget_ms` | constant | `16.67` ms | Web exported profiling 需要明确 60fps p95 起点。 |
+| `host_frame_p99_budget_ms` | constant | `25.0` ms | Web exported profiling 需要长帧告警起点。 |
+| `runtime_normal_tick_budget_ms` | constant | `2.0` ms | 正常 runtime tick 需要保留渲染/UI/audio 预算。 |
+| `max_single_frame_stall_ms` | constant | `50.0` ms | Web 体验需要限制可见卡顿尖峰。 |
+| `trace_total_memory_budget_bytes` | constant | `1048576` bytes | trace 需要总内存预算，不只按条数限制。 |
+| `snapshot_summary_max_bytes` | constant | `2048` bytes | snapshot summary 需要可测 payload 上限。 |
+| `event_batch_max_bytes` | constant | `8192` bytes | catch-up delivery 需要事件批次 payload 上限。 |
+| `ai_observation_snapshot_max_bytes` | constant | `2048` bytes | CPU/木桩观察快照需要可测 payload 上限。 |
 | `combat_tick_duration_seconds` | formula | `1 / combat_ticks_per_second` | 下游系统需要从 tick rate 推导真实秒长。 |
 | `seconds_to_combat_ticks` | formula | `max(0, ceil(duration_seconds * combat_ticks_per_second))` | 下游系统若提供秒数，必须统一向上换算。 |
 | `next_committed_tick_index` | formula | `current_committed_tick_index + 1` | running/hitstop committed runtime tick 必须统一递增。 |
@@ -519,10 +623,14 @@ The `catch_up_stop_reason` output is defined as one of:
 | `elapsed_running_time_seconds` | formula | `elapsed_running_ticks / combat_ticks_per_second` | UI/QA 需要统一 active running time。 |
 | `round_timer_remaining_ticks` | formula | `max(0, round_duration_ticks - elapsed_running_ticks)` | 回合 timer 需要排除 hitstop、pause、focus。 |
 | `hitstop_remaining_ticks_after_tick` | formula | `max(0, hitstop_remaining_ticks_before_tick - hitstop_tick_flag)` | hitstop countdown 需要跨系统一致。 |
-| `runtime_event_sequence_key` | formula | `(round_instance_id, committed_tick_index, tick_phase_order, within_phase_event_index)` | HUD/VFX/音效/debug 都依赖同一排序和去重 key。 |
+| `runtime_event_sequence_key` | formula | `(round_instance_sequence, committed_tick_index, phase_order_namespace_ordinal, tick_phase_order, within_phase_event_index)` | HUD/VFX/音效/debug 都依赖同一排序和去重 key，且 namespace 必须有明确 ordinal。 |
+| `runtime_state_sequence_key` | formula | `(round_instance_sequence, state_transition_index)` | pause/focus/recovery/resume 等非 combat state transition 需要独立排序和幂等。 |
 | `trace_window_bounds` | formula | `[max(0, latest_committed_tick_index - trace_window_ticks + 1), latest_committed_tick_index]` | QA/debug trace 需要统一保留窗口。 |
 | `backlog_tick_count` | formula | `max(0, floor(max(0, delayed_real_seconds) / combat_tick_duration_seconds))` | Web backlog 分类必须统一且 clamp negative delay。 |
 | `backlog_classification` | formula | focus/backlog enum classification | pause/focus/recovery 行为必须跨 runtime、UI、QA 一致。 |
+| `catch_up_wall_clock_guard_exceeded` | formula | `measured_catch_up_wall_clock_ms >= catch_up_wall_clock_budget_ms` | Web catch-up 必须有可测 wall-clock guard。 |
+| `catch_up_stop_reason` | formula | priority enum formula | QA 和恢复 UI 需要知道补跑停止原因、是否暂停在结果前、以及是否等待 presentation ack。 |
+| `decision_age_ticks` | formula | `target_presented_running_tick_index - based_on_presented_running_tick_index` | CPU/木桩反应延迟必须按玩家已看到的 running ticks 可测，且不可读同 tick 隐藏状态。 |
 
 `runtime_tick_phase_order` 是 deterministic invariant，不作为 tuning knob；后续如果 registry 支持 enum/list invariant，可再登记。
 
@@ -532,18 +640,20 @@ The `catch_up_stop_reason` output is defined as one of:
 
 - **If `delayed_real_seconds < combat_tick_duration_seconds`**: 不提交新的 runtime tick；表现层只能重绘最近一次已提交 snapshot。
 - **If `backlog_tick_count = 0`**: 不执行 catch-up；运行时等待累计到足够真实时间后再提交下一 tick。
-- **If `1 <= backlog_tick_count <= catch_up_max_ticks`**: 运行时最多按顺序补跑 `backlog_tick_count` 个 ticks，每个 tick 单独提交 snapshot 和 event batch；如果途中触发 blocking state、wall-clock guard 或 fairness guard，则提前停止，并记录 `catch_up_stop_reason`。
+- **If `1 <= backlog_tick_count <= catch_up_max_ticks`**: 运行时最多按顺序补跑 `backlog_tick_count` 个 ticks；每个 delayed tick 正式提交前必须先通过只读 `catch_up_preflight`。如果 preflight、blocking state、presentation ack guard 或 wall-clock guard 触发，则提前停止，并记录 `catch_up_stop_reason`。
 - **If `backlog_tick_count > catch_up_max_ticks`**: 运行时进入 `runtime_state = paused`，`state_reason = recovery_pause`；不静默跳 tick，不一次性快进，不在隐藏状态下推进战斗。
 - **If `catch_up_max_ticks = 0` and `backlog_tick_count > 0`**: 任何积压都进入 `recovery_pause`；`0` 只允许显式 debug/stress config，不是 MVP 正常配置。
 - **If focus is lost while backlog exists**: `focus_suspended` 优先于 catch-up；运行时停止 combat advancement，清理/忽略积压，不在恢复焦点后补跑失焦期间错过的 ticks。
 - **If delayed time is negative due to clock/platform anomaly**: 将 delay 当作 `0`；不提交反向 tick，并记录 debug/trace warning。
-- **If catch-up processing reaches a tick that enters `hitstop`, `paused`, `focus_suspended`, or `round_ended`**: 在提交该 transition tick 后停止本次 catch-up；不得继续补跑后续 ticks。
-- **If catch-up processing reaches or exceeds `catch_up_wall_clock_budget_ms`**: 在最近一个安全 tick boundary 停止补跑并进入 `runtime_state = paused`、`state_reason = recovery_pause`；不得为了追赶时间制造更长主线程卡顿。
-- **If catch-up tick emits a fairness-stop event**: 允许提交触发该事件的 tick，但必须在继续推进下一枚 combat tick 前进入 `runtime_state = paused`、`state_reason = recovery_pause`，并通过恢复 UI/倒计时让玩家重新接管。MVP fairness-stop events 至少包括 `startup_started`、`active_frame_started`、`recovery_started`、`punish_window_opened`、`burst_started`、`hit_landed`、`blocked`、`ko_started`、`round_ended`。
+- **If catch-up preflight finds a `fairness_stop_required` fact**: 不提交该 delayed tick；runtime 停在上一枚已提交 tick，进入 `runtime_state = paused`、`state_reason = recovery_pause`，trace 记录 `catch_up_stop_reason = fairness_guard`、`blocked_transition_type`、`blocked_tick_index` 和 `presentation_priority_reason`。MVP `fairness_stop_required` 至少包括将进入 active threat 的攻击或 projectile、`punish_window_opened`、`projectile_threat_entered`、以及可能在未展示前导致 `hit_landed`、`blocked`、`burst_started`、`ko_started`、`round_ended` 或改变可反击/可防御结果的事实。
+- **If a safely committed catch-up tick reaches `hitstop`, `paused`, `focus_suspended`, or `round_ended`**: 在提交该 transition tick 后停止本次 catch-up；不得继续补跑后续 ticks。
+- **If catch-up processing reaches or exceeds `catch_up_wall_clock_budget_ms`**: 在最近一个安全 tick boundary 停止补跑并进入 `runtime_state = paused`、`state_reason = recovery_pause`；不得为了追赶时间制造更长主线程卡顿。若同一尝试也触发 fairness preflight 或 presentation ack guard，则优先记录玩家可见性原因。
+- **If catch-up tick emits `presentation_must_show` facts**: delivery context 必须标记 `presentation_ack_required = true`，并给出 `presentation_ack_id` 与 `presentation_priority_reason`；至少一个视觉消费者 ack 或明确降级前，后续依赖该事实的 AI/木桩决策、新的 silent catch-up tick 和自动 resume 都不得继续。
+- **If catch-up tick emits only `compressible_phase` facts**: 可以继续 catch-up；表现层可以压缩 startup/recovery/debug-only 反馈，但不得删除 authoritative facts、改变 event ordering 或制造与真实 tick 顺序相反的反馈。
 - **If catch-up needs an input snapshot for a delayed target tick**: 只能使用该目标 tick 已排队/已采集的 input snapshot；不得 retroactively 读取当前 host frame 的按键状态来填补过去 tick。
-- **If CPU/dummy decision generation would observe an unpresented fairness-stop transition during catch-up**: 停止 catch-up 并进入 `recovery_pause`；CPU/木桩不得在玩家尚未看到的关键 transition 后继续生成下一 tick 反应。
+- **If CPU/dummy decision generation would observe an unpresented `fairness_stop_required` or `presentation_must_show` fact during catch-up**: 停止 catch-up 或冻结 CPU/木桩决策生成，直到玩家已收到对应 presentation packet ack；CPU/木桩不得在玩家尚未看到的关键 transition、projectile threat、spacing threat 或 energy threshold 后继续生成下一 tick 反应。
 - **If runtime enters `paused` because of `recovery_pause`**: backlog/accumulator 不得继续增长；恢复确认后从新的安全 timing baseline 继续，不能 replay 暂停期间真实时间。
-- **If multiple catch-up ticks run inside one host/render frame**: 每个 tick 仍必须执行完整固定 tick order，并各自产生独立 event batch；逻辑不得合并 tick。event batch 必须带 catch-up delivery metadata，供 HUD/VFX/audio 压缩表现。
+- **If multiple catch-up ticks run inside one host/render frame**: 每个已提交 tick 仍必须执行完整固定 tick order，并各自产生独立 event batch；逻辑不得合并 tick。event batch 必须带 catch-up delivery metadata 和逐批 context，供 HUD/VFX/audio 压缩表现。
 
 ### Atomic Tick Boundaries
 
@@ -565,7 +675,7 @@ The `catch_up_stop_reason` output is defined as one of:
 - **If `round_ended` is active**: 忽略所有战斗 command；只允许 restart、exit 或菜单确认类 request。
 - **If an invalid state transition is requested, such as `inactive -> hitstop` or `round_ended -> running` without restart/countdown**: 拒绝该 transition，保持当前合法状态，并记录 debug/trace warning。
 - **If quick restart is requested during `running`, `hitstop`, `paused`, `focus_suspended`, or `round_ended`**: 必须先清空旧 round 的 hitstop、input buffers、pending runtime requests、actors、projectiles、timers、snapshots 和 event batches，再进入新 round flow。
-- **If quick restart creates a new round instance**: 必须生成新的 `round_instance_id`；旧 round event key 不得影响新 round。
+- **If quick restart creates a new round instance**: 必须生成新的 `round_instance_id`，递增 `round_instance_sequence` 和 `presentation_generation_id`，重置 `committed_tick_index = 0`，并拒绝旧 round command/event/snapshot/UI/audio/VFX/debug delivery。旧 round event key 不得影响新 round。
 
 ### Countdown Behavior
 
@@ -600,9 +710,10 @@ The `catch_up_stop_reason` output is defined as one of:
 - **If several events occur in the same tick**: 必须按 `runtime_event_sequence_key` 发布；不得使用 Godot node order、render order、signal order 或偶然数组顺序。
 - **If a tick produces hit, block, damage, KO, or round-end facts**: 所有已提交事实必须进入同一个有序 event batch；消费者不得从表现层自行推断缺失战斗事实。
 - **If an event consumer processes the same event batch more than once due to redraw, pause/resume, or browser repaint**: gameplay 不得改变；event sequence key / idempotency key 用于让消费者去重或幂等处理；HUD pulse、VFX、audio one-shot 和 debug one-shot 也不得重复播放。
-- **If catch-up delivers multiple event batches in one host frame**: delivery context 必须标明 `delivery_mode = catch_up`、批次数量和批次索引；表现层可压缩非权威 pulse/VFX/audio，但不得删除或重排 authoritative facts。
-- **If a runtime state transition occurs outside committed runtime tick advancement**: 使用 `runtime_state_sequence_key` 发布 read-only state transition record；不得伪造 committed combat event。
-- **If an old event batch from a previous round remains after quick restart**: 它必须被 invalidated；不得影响新 round 的 HUD、VFX、audio、debug state 或 gameplay。
+- **If catch-up delivers multiple event batches in one host frame**: `event_batch_delivery_contexts` 必须逐批标明 `delivery_mode = catch_up`、`delivery_tick_start`、`delivery_tick_end`、批次数量、批次索引、`final_snapshot_committed_tick_index`、`presentation_generation_id`、`contains_must_show` 和 `presentation_ack_required`；表现层可压缩非权威 pulse/VFX/audio，但不得删除或重排 authoritative facts。
+- **If snapshot, event batch, UI state payload, or runtime state transition record is delivered to presentation**: 它们必须属于同一个 `RuntimePresentationPacket` 或等价原子 delivery；消费者不得把 tick `T` 的 event pulse 套到 tick `T+2` 的 snapshot 数值上，除非 packet 明确标记为 catch-up compression result。
+- **If a runtime state transition occurs outside committed runtime tick advancement**: 使用 `runtime_state_sequence_key` 和 state-transition `idempotency_key` 发布 read-only state transition record；不得伪造 committed combat event。
+- **If an old event batch from a previous round remains after quick restart**: 它必须返回 `stale_policy_result = discarded_stale_generation` 或 `discarded_stale_round`；不得影响新 round 的 HUD、VFX、audio、debug state 或 gameplay。
 - **If trace history exceeds `trace_window_ticks`**: 可以淘汰更老 trace entries，但当前 combat state 和 event ordering 不得改变。
 - **If no gameplay tick has been committed for the current round**: trace 必须报告 empty history 或 tick `0` initial snapshot；不得伪造 running tick。
 - **If a non-combat state transition occurs outside gameplay tick advancement, such as pause/focus/restart request**: 可以记录 trace/state-transition record，但不得递增 combat tick index，也不得发布 combat gameplay event batch。
@@ -622,7 +733,7 @@ The `catch_up_stop_reason` output is defined as one of:
 |---|---|
 | 同一输入快照中左右、上下、攻击/防御、多按钮冲突如何解析 | 输入映射与输入缓冲 |
 | pause/focus 恢复后的 held input 是持续、清空还是要求重按 | 输入映射与输入缓冲 |
-| 输入缓冲是否在 hitstop、pause、countdown、focus suspension 中过期 | 输入映射与输入缓冲 |
+| 输入缓冲在 pause、countdown、focus suspension 中如何过期；hitstop 中不得仅按 committed runtime tick 自然过期，具体窗口由输入 GDD 定义 | 输入映射与输入缓冲 |
 | move cancel、chain、whiff-cancel、hit-confirm、combo reset | 短连招与取消规则；角色数据与招式数据 |
 | 防御方向、cross-up、projectile guard、unblockable tag | 防御、格挡与受击反馈 |
 | 每招 hitstun、blockstun、hitstop、recovery 数值 | 命中停顿与硬直窗口；角色数据与招式数据 |
@@ -630,7 +741,7 @@ The `catch_up_stop_reason` output is defined as one of:
 | 气槽获得、消耗、refund、burst 可用性、burst invulnerability | 气槽与爆气反杀 |
 | projectile speed、lifetime、owner collision、反弹、对波、多弹种 | 气弹 / 能量攻击 |
 | wall collision、corner push、facing flip、overlap correction、jump/dash movement | 移动与距离控制 |
-| CPU reaction delay、decision frequency、script priority、dummy behavior | 简单脚本 CPU；训练木桩 |
+| CPU 具体行为表、decision frequency、script priority、dummy behavior；但最小公平反应延迟下限仍由本 GDD 定义 | 简单脚本 CPU；训练木桩 |
 | catch-up 后 HUD/VFX/audio 如何压缩或展示多个 event batches | HUD 与战斗信息反馈；VFX 可读性系统；音效反馈 |
 | rollback、networking、本地双人、正式 replay、beam clash、多角色差异 | 非 MVP；对应后续系统 GDD |
 
@@ -664,6 +775,8 @@ The `catch_up_stop_reason` output is defined as one of:
 | Web 平台壳与浏览器焦点 | Hard | `focus_suspended` 合同、backlog/focus 恢复规则 | 不得让浏览器失焦期间隐藏推进战斗。 |
 | 暂停与基础菜单 | Hard | `paused` 状态、pause reason、resume boundary | 不得在 paused 中执行 combat command。 |
 | 调参与调试显示 | Hard | tick trace、snapshot、event sequence key | 调试显示只读，不得成为 gameplay authority。 |
+| 训练木桩 | Hard | command entry、AIObservationSnapshot、rejected-command trace | 木桩不得读取 same-tick collision/player input 或直接制造命中事实。 |
+| 简单脚本 CPU | Hard | command entry、AIObservationSnapshot、decision-age trace、catch-up fairness guard | CPU 不得读取未呈现关键 transition、live node、debug trace 或 same-tick hidden state。 |
 | 本地双人对战 | Later-scope hard | 同一 runtime tick authority 和 event ordering | Alpha 前不得推动 rollback、netcode 或正式 replay 需求进入 MVP。 |
 
 ### Indirect Downstream Dependents
@@ -706,13 +819,27 @@ The `catch_up_stop_reason` output is defined as one of:
 
 ## Tuning Knobs
 
-本系统只拥有固定运行时本身的调参项：tick rate、短暂掉帧补跑、QA trace 窗口、countdown 输入预读策略、浏览器失焦恢复策略。伤害、硬直、招式帧数据、输入缓冲、移动速度、气弹速度、CPU 延迟、VFX/音效时长和回合长度都不属于本系统。
+本系统只拥有固定运行时本身的调参项：tick rate、短暂掉帧补跑、QA trace 窗口、最小 CPU/木桩观察反应延迟、Web 性能/内存预算、countdown 输入预读策略、浏览器失焦恢复策略。伤害、硬直、招式帧数据、输入缓冲、移动速度、气弹速度、CPU 行为表、VFX/音效时长和回合长度都不属于本系统。
 
 | Knob | MVP 默认 / 建议 | 安全范围 | 影响什么 | 过低 / 关闭会坏什么 | 过高 / 开启过度会坏什么 | Owner / Source of Truth |
 |---|---:|---:|---|---|---|---|
 | `combat_ticks_per_second` | `60` ticks/sec | `30–120`；MVP 锁定 `60` | 所有战斗时间粒度、帧数据解释、timer、trace、自动化测试。对应公式：`combat_tick_duration_seconds`、`seconds_to_combat_ticks`。 | 战斗 timing 变粗；短前摇、短确反、短连段窗口难以表达；玩家会感觉判定不精确。 | 浏览器 CPU 压力、事件量和 trace 量上升；所有下游 tick 数据都要重写；测试维护成本变高。 | `fixed-logic-runtime` GDD；跨系统常量，后续应登记到 registry。 |
-| `catch_up_max_ticks` | `6` ticks，约 `0.10s` at 60 ticks/sec | `2–8`；`0` 只适合 debug/stress 模式 | 浏览器短暂卡顿后允许按顺序补跑多少 combat ticks。对应公式：`backlog_classification`。 | 轻微卡顿也频繁进入 `recovery_pause`，战斗被打断，玩家感觉游戏“太敏感”。 | 一次补跑太多 tick，可能造成主线程长帧、输入/表现跳跃，甚至 spiral-of-death。 | GDD 定义语义；最终数值由 Runtime ADR / Web 性能验证锁定。 |
+| `catch_up_max_ticks` | `6` ticks，约 `0.10s` at 60 ticks/sec | `2–8`；`0` 只适合 debug/stress 模式 | 浏览器短暂卡顿后允许按顺序补跑多少 combat ticks。对应公式：`backlog_classification`。 | 轻微卡顿也频繁进入 `recovery_pause`，战斗被打断，玩家感觉游戏“太敏感”。 | 一次补跑太多 tick，可能造成主线程长帧、输入/表现跳跃，甚至 spiral-of-death；wall-clock guard 和 fairness guard 必须优先。 | GDD 定义语义；最终数值由 Runtime ADR / Web 性能验证锁定。 |
+| `catch_up_wall_clock_budget_ms` | `4.0` ms per host update | `2.0–6.0` ms | 单次 host update 内 catch-up runtime work 的 wall-clock 上限。对应公式：`catch_up_wall_clock_guard_exceeded`。 | 太低会让轻微卡顿频繁进入 recovery pause。 | 太高会挤占渲染、UI、音频和浏览器预算，增加长帧与 spiral-of-death 风险。 | GDD 给出 MVP 起点；Runtime ADR / browser profiling 可调整。 |
 | `trace_window_ticks` | `180` ticks，约 `3s` at 60 ticks/sec | `120–600`；更长只用于 dev/QA 临时抓取 | QA/debug 能回看最近多少 tick 的输入、状态变化、snapshot 和 event batch。对应公式：`trace_window_bounds`。 | 很容易丢失 bug 起因，例如输入、hitstop、pause/focus、hit/block 前的上下文。 | trace 噪音和内存/日志体积变大，Web 调试可能变慢，QA 更难定位重点。 | `fixed-logic-runtime` debug/QA config；不是玩家 balance。 |
+| `trace_max_events_per_tick` | `32` events | `8–64` | 单 tick trace/event retention 的事件数量上限。 | 复杂同 tick bug 可能被截断，需要 warning。 | Web memory/GC 和 debug 噪音升高。 | `fixed-logic-runtime` debug/QA config。 |
+| `trace_max_payload_bytes_per_entry` | `4096` bytes | `1024–8192` | 单 trace entry payload 上限。 | 上下文过少，QA 难复现。 | 大 payload 造成 Web 内存和序列化压力。 | `fixed-logic-runtime` debug/QA config。 |
+| `trace_max_objects_per_tick` | `64` objects | `16–128` | 单 tick trace 可保留对象/记录数量上限。 | 复杂 tick 诊断信息不足。 | 对象分配和 GC 压力上升。 | `fixed-logic-runtime` debug/QA config。 |
+| `trace_warning_throttle_per_second` | `10` warnings/sec | `1–30` | warning 输出节流，防止日志洪水。 | QA 可能看不到重复错误频率。 | 日志刷屏、Web 调试卡顿。 | `fixed-logic-runtime` debug/QA config。 |
+| `min_ai_decision_age_ticks` | `6` ticks，约 `0.10s` at 60 ticks/sec | `3–12`；低于 `6` 需要设计复审 | CPU/木桩从已提交观察到执行 command 的最小 tick 间隔。对应公式：`decision_age_ticks`。 | CPU/木桩会像读输入或读同 tick hidden state，破坏“我可以练会”。 | CPU/木桩显得迟钝，训练反馈不够及时。 | Runtime 提供最小公平合同；具体 AI 行为表由 `simple-scripted-cpu` / `training-dummy` GDD 调整但不得低于已批准下限。 |
+| `host_frame_p95_budget_ms` | `16.67` ms | `<= 16.67` target | exported Web build 的 p95 host frame 时间。 | 预算过低会造成不必要警报。 | 预算过高会掩盖 60fps 失败。 | Runtime ADR / Web profiling。 |
+| `host_frame_p99_budget_ms` | `25.0` ms | `16.67–33.33` ms | exported Web build 的 p99 长帧预算。 | 预算过低会把轻微浏览器 jitter 当失败。 | 预算过高会让明显卡顿通过。 | Runtime ADR / Web profiling。 |
+| `runtime_normal_tick_budget_ms` | `2.0` ms | `0.5–4.0` ms | 单个正常 runtime tick 的模拟预算。 | 预算过低会阻碍调试实现。 | 预算过高会挤占渲染、UI、音频。 | Runtime ADR / Web profiling。 |
+| `max_single_frame_stall_ms` | `50.0` ms | `33.33–100.0` ms | 单次可见卡顿尖峰上限。 | 预算过低会将浏览器偶发调度误判为失败。 | 预算过高会让玩家明显失控。 | Runtime ADR / Web profiling。 |
+| `trace_total_memory_budget_bytes` | `1048576` bytes | `262144–4194304` bytes | trace ring buffer 总内存预算。 | QA 上下文不足。 | Web heap/GC 压力过高。 | Runtime debug/QA config。 |
+| `snapshot_summary_max_bytes` | `2048` bytes | `1024–4096` bytes | 单个 snapshot summary payload 上限。 | HUD/debug 可能缺少必要字段。 | 每 tick copy/alloc 成本过高。 | Runtime data contract ADR。 |
+| `event_batch_max_bytes` | `8192` bytes | `2048–16384` bytes | 单 tick event batch payload 上限。 | 复杂同 tick 事件可能需要截断警告。 | catch-up delivery 和 debug 成本过高。 | Runtime data contract ADR。 |
+| `ai_observation_snapshot_max_bytes` | `2048` bytes | `1024–4096` bytes | CPU/木桩观察快照 payload 上限。 | AI 可能缺少合法可见事实。 | AI replay/hash 和 GC 成本过高。 | Runtime data contract ADR；AI GDD 消费。 |
 | `countdown_direction_pre_read_enabled` | `true`，仅方向输入 | `{true, false}` | round start 前是否允许记录方向 held input；不允许攻击、气弹、爆气在第一枚 running tick 自动释放。 | 玩家在 countdown 期间按住方向无效，开局第一 tick 可能感觉迟钝，需要重新按键。 | 如果扩展到攻击/气弹/爆气，会造成开局自动出招；如果方向预读规则不清，会产生 round-start option select。 | Runtime 决定 countdown 状态允许读取什么；输入 GDD 负责方向冲突和 held input 细则。 |
 | `focus_restore_requires_explicit_confirm` | `true` | `{true, false}`；`false` 只适合 debug 或已验证安全的特殊模式 | 浏览器失焦恢复后是否要求玩家确认再继续；防止 stale held input 和玩家未准备好时继续战斗。 | 恢复焦点时可能直接继续战斗，玩家可能因旧按键、窗口切换或页面恢复而误移动/误防御/误出招。 | 频繁 focus 抖动时会增加确认负担，打断节奏。 | Runtime 拥有 focus 恢复安全策略；菜单/UI 只负责确认提示表现；输入 GDD 负责 held input 清理/重按规则。 |
 
@@ -727,7 +854,7 @@ The `catch_up_stop_reason` output is defined as one of:
 | `hitstop_ticks`、`hitstun_ticks`、`blockstun_ticks` | Runtime 负责冻结和倒计时，不拥有每招时长。 | 命中停顿与硬直窗口；角色数据与招式数据 |
 | damage、chip damage、guard damage | Runtime 只提交事件，不做伤害平衡。 | 血量、伤害、计时与胜负；防御、格挡与受击反馈 |
 | move startup/active/recovery、cancel window | 属于招式和连段设计。 | 角色数据与招式数据；短连招与取消规则 |
-| movement speed、projectile speed、CPU delay | 属于对应玩法系统。 | 移动与距离控制；气弹 / 能量攻击；简单脚本 CPU |
+| movement speed、projectile speed、CPU 行为表 / 决策频率 / 难度曲线 | 属于对应玩法系统；runtime 只拥有最小公平反应延迟下限。 | 移动与距离控制；气弹 / 能量攻击；简单脚本 CPU |
 | VFX duration、audio timing、camera smoothing | 表现层可读性问题，不得影响 combat tick。 | VFX、音效、相机 / Presentation GDD |
 | `runtime_tick_phase_order`、state priority、event sequence key | 这些是确定性合同，不是 tuning knobs。 | `fixed-logic-runtime` invariant |
 
@@ -739,11 +866,35 @@ The `catch_up_stop_reason` output is defined as one of:
 |---|---:|---|---|
 | `combat_ticks_per_second` | `60` | ticks/second | 所有战斗、输入、移动、HUD、debug trace 和测试必须共享同一 tick rate。 |
 | `catch_up_max_ticks` | `6` | ticks | runtime、QA 和浏览器恢复行为需要共享阈值。 |
+| `catch_up_wall_clock_budget_ms` | `4.0` | ms | catch-up wall-clock guard 需要可测默认预算。 |
 | `trace_window_ticks` | `180` | ticks | QA/debug trace 需要统一保留窗口。 |
+| `trace_max_events_per_tick` | `32` | events | QA/debug trace 需要事件数量上限。 |
+| `trace_max_payload_bytes_per_entry` | `4096` | bytes | QA/debug trace 需要 payload 上限。 |
+| `trace_max_objects_per_tick` | `64` | objects | QA/debug trace 需要对象数量上限。 |
+| `trace_warning_throttle_per_second` | `10` | warnings/sec | warning 输出需要节流。 |
+| `min_ai_decision_age_ticks` | `6` | presented running ticks | CPU/木桩最小观察反应延迟需要跨 runtime、AI、dummy 和 QA 一致，且只按玩家已看到的 running ticks 计算。 |
+| `host_frame_p95_budget_ms` | `16.67` | ms | Web profiling 需要 60fps p95 起点。 |
+| `host_frame_p99_budget_ms` | `25.0` | ms | Web profiling 需要长帧告警起点。 |
+| `runtime_normal_tick_budget_ms` | `2.0` | ms | 正常 tick runtime work 需要可测预算。 |
+| `max_single_frame_stall_ms` | `50.0` | ms | Web 体验需要可测卡顿上限。 |
+| `trace_total_memory_budget_bytes` | `1048576` | bytes | trace ring buffer 需要总内存上限。 |
+| `snapshot_summary_max_bytes` | `2048` | bytes | snapshot summary 需要 payload 上限。 |
+| `event_batch_max_bytes` | `8192` | bytes | event batch 需要 payload 上限。 |
+| `ai_observation_snapshot_max_bytes` | `2048` | bytes | AI observation snapshot 需要 payload 上限。 |
 
-`countdown_direction_pre_read_enabled` 和 `focus_restore_requires_explicit_confirm` 是跨系统策略；如果项目决定把 boolean policy constants 也登记进 registry，后续再加入。
+`countdown_direction_pre_read_enabled` 和 `focus_restore_requires_explicit_confirm` 是跨系统 boolean policy；它们保持在本 GDD 的 tuning knob 表中。后续如果 registry 支持 boolean policy/invariant，可登记它们；当前 registry 只同步数值 constants 和 formulas。
 
 ## Acceptance Criteria
+
+### Acceptance Criteria Tiers
+
+| Tier | Meaning | Criteria |
+|---|---|---|
+| MVP-blocking | Must pass before fixed runtime can be used by downstream MVP gameplay systems. | AC-FLR-01 through AC-FLR-64, AC-FLR-66 through AC-FLR-74 |
+| ADR-gated | Must be accepted before implementation task breakdown; these are architecture decisions, not substitutes for behavior ACs. | Runtime Scheduler ADR; Input Snapshot ADR; Presentation Delivery ADR; Runtime Data Packet ADR; Web Focus/Audio Unlock Shell ADR; Godot Pause/Time-scale ADR; Physics Boundary ADR; Profiling/QA Instrumentation ADR |
+| Hardening/debug | Must pass before CPU/dummy story completion or QA handoff, but can wait until those downstream systems exist. | AC-FLR-65 |
+
+Every behavior AC appears in exactly one primary tier. Required ADRs unblock implementation planning only; they do not count as passing runtime behavior tests.
 
 ### AC-FLR-01 — Combat ticks are the authoritative simulation unit
 
@@ -759,9 +910,9 @@ The `catch_up_stop_reason` output is defined as one of:
 
 **Given** the round enters its first valid `running` tick, **When** the first gameplay tick commits, **Then** the committed tick index is `1`.
 
-### AC-FLR-04 — Non-running states do not increment committed gameplay ticks
+### AC-FLR-04 — Non-advancing states do not increment committed runtime ticks
 
-**Given** the runtime is in `inactive`, `countdown`, `paused`, `focus_suspended`, or `round_ended`, **When** real time passes, **Then** no new committed gameplay tick index is produced, `elapsed_running_ticks` does not increase, and the round timer does not decrease.
+**Given** the runtime is in `inactive`, `countdown`, `paused`, `focus_suspended`, or `round_ended`, **When** real time passes, **Then** no new `committed_tick_index` is produced, `elapsed_running_ticks` does not increase, and the round timer does not decrease.
 
 ### AC-FLR-05 — Running ticks execute in the required deterministic order
 
@@ -906,11 +1057,13 @@ The `catch_up_stop_reason` output is defined as one of:
 
 **Given** focus is not lost and `backlog_tick_count > catch_up_max_ticks`, **When** backlog is evaluated, **Then** backlog classification is `recovery_pause`.
 
-### AC-FLR-28 — Small backlog catches up at most to the safe limit
+### AC-FLR-28 — Small backlog catches up only across fairness-safe ticks
 
-**Given** the runtime has a backlog classified as `in_order_catch_up`, **When** catch-up is processed, **Then** the runtime commits at most `backlog_tick_count` delayed ticks, each committed tick is processed one at a time in increasing tick order, no committed tick ID is skipped, and each committed catch-up tick produces the same observable snapshot and event ordering rules as a normal runtime tick.
+**Given** the runtime has a backlog classified as `in_order_catch_up`, **When** catch-up is processed, **Then** each delayed tick is checked by read-only `catch_up_preflight` before commit, only preflight-safe delayed ticks are committed, committed delayed ticks are processed one at a time in increasing tick order, no committed tick ID is skipped, and each committed catch-up tick produces the same observable snapshot and event ordering rules as a normal runtime tick.
 
-**Given** catch-up is processing delayed ticks, **When** a blocking state, CPU wall-clock guard, or fairness guard is reached, **Then** catch-up stops at the nearest safe tick boundary instead of forcing the remaining backlog through silently.
+**Given** a QA test config forces `catch_up_wall_clock_budget_ms` to be exceeded after 2 preflight-safe catch-up ticks, and `backlog_tick_count = 5`, **When** catch-up processing begins, **Then** exactly 2 delayed ticks are committed, catch-up stops at the next safe tick boundary, runtime enters `runtime_state = paused` with `state_reason = recovery_pause`, and trace records `catch_up_stop_reason = wall_clock_guard`, `backlog_tick_count = 5`, `catch_up_ticks_committed = 2`, and `remaining_backlog_ticks = 3`.
+
+**Given** delayed tick `T` would enter active threat, open a punish window, create projectile threat, or possibly resolve hit/block/KO/round end before the player has seen the cause, **When** `catch_up_preflight` evaluates tick `T`, **Then** tick `T` is not committed during silent catch-up, runtime remains at the previous committed tick, runtime enters `runtime_state = paused` with `state_reason = recovery_pause`, and trace records `catch_up_stop_reason = fairness_guard`, `blocked_tick_index = T`, `blocked_transition_type`, and `presentation_priority_reason`.
 
 ### AC-FLR-29 — Catch-up stops when a blocking state is reached
 
@@ -918,9 +1071,9 @@ The `catch_up_stop_reason` output is defined as one of:
 
 ### AC-FLR-30 — Large or unsafe backlog enters recovery pause instead of skipping ticks
 
-**Given** focus is not lost and `backlog_tick_count > catch_up_max_ticks`, **When** backlog is classified, **Then** the runtime enters `recovery_pause` or equivalent paused recovery behavior, no missed combat ticks are replayed silently, no gameplay tick IDs are skipped, and the trace records the backlog size and recovery decision.
+**Given** focus is not lost and `backlog_tick_count > catch_up_max_ticks`, **When** backlog is classified, **Then** the runtime enters `runtime_state = paused`, `state_reason = recovery_pause`, no missed combat ticks are replayed silently, no committed runtime tick IDs are skipped, and the trace records `backlog_tick_count`, `catch_up_max_ticks`, `catch_up_attempted = false`, and `catch_up_stop_reason = invalid_backlog`.
 
-**Given** focus is not lost and `backlog_tick_count <= catch_up_max_ticks`, **When** catch-up would exceed its CPU wall-clock guard or hide a player-visible startup/active/recovery/punish/burst/KO/round-end transition, **Then** the runtime stops silent catch-up and enters `recovery_pause` or an explicit recovery flow.
+**Given** focus is not lost and `backlog_tick_count <= catch_up_max_ticks`, **When** catch-up preflight detects a fairness-stop tick, catch-up exceeds `catch_up_wall_clock_budget_ms`, reaches a blocking state, or requires presentation ack, **Then** the runtime stops silent catch-up at the specified boundary, records the exact `catch_up_stop_reason`, exposes whether the stop occurred before or after a delayed tick commit, and does not continue accumulating backlog while paused or waiting for ack.
 
 ### AC-FLR-31 — Focus loss wins over backlog catch-up
 
@@ -950,7 +1103,9 @@ The `catch_up_stop_reason` output is defined as one of:
 
 ### AC-FLR-37 — Event sequence keys are deterministic and unique within a round
 
-**Given** events are emitted by the fixed-logic runtime, **When** QA inspects each event, **Then** each event includes `round_instance_id`, `committed_tick_index`, `tick_phase_order`, and `within_phase_event_index`, and sorting events by `(round_instance_id, committed_tick_index, tick_phase_order, within_phase_event_index)` reproduces the committed event order.
+**Given** runtime events are emitted by the fixed-logic runtime, **When** QA inspects each event, **Then** each event includes `round_instance_sequence`, `committed_tick_index`, `phase_order_namespace_ordinal`, `tick_phase_order`, and `within_phase_event_index`, and sorting events by `(round_instance_sequence, committed_tick_index, phase_order_namespace_ordinal, tick_phase_order, within_phase_event_index)` reproduces the committed event order.
+
+**Given** hitstop events, debug trace records, or state-transition presentation facts are emitted, **When** QA inspects their ordering metadata, **Then** combat/debug events use a valid `phase_order_namespace_ordinal`, while non-combat runtime state transitions use `runtime_state_sequence_key`; they do not reuse running-tick phase numbers without namespace and they do not mix state transition records into combat event ordering.
 
 ### AC-FLR-38 — Event batches are committed facts, not requests
 
@@ -970,9 +1125,21 @@ The `catch_up_stop_reason` output is defined as one of:
 
 **Given** `latest_committed_tick_index = 200` and `trace_window_ticks = 180`, **When** the runtime reports the available debug trace window, **Then** `trace_window_bounds = [max(0, latest_committed_tick_index - trace_window_ticks + 1), latest_committed_tick_index] = [21, 200]`.
 
-### AC-FLR-42 — Minimal QA/debug trace contains required runtime facts
+### AC-FLR-42 — Minimal QA/debug trace exposes versioned schema-specific runtime facts
 
-**Given** QA enables the minimal fixed-runtime trace, **When** combat ticks, backlog decisions, state transitions, rejected requests, snapshots, or event batches occur, **Then** the trace exposes these fields or references: `round_instance_id`, `committed_tick_index`, `runtime_state`, `previous_runtime_state`, `state_reason`, `elapsed_running_ticks`, `round_timer_remaining_ticks`, `hitstop_remaining_ticks`, `backlog_tick_count`, `backlog_classification`, `pause_reason`, `focus_restore_gate_state`, `command_source`, `command_id`, `tick_phase_order`, `within_phase_event_index`, `event_type`, `rejection_reason`, `snapshot_summary`, and `trace_window_bounds`.
+**Given** QA enables the minimal fixed-runtime trace, **When** any trace record is emitted, **Then** every record includes a shared header with `schema_version`, `round_instance_id`, `round_instance_sequence`, `record_type`, `committed_tick_index` when applicable, `runtime_state`, `tick_execution_state`, `post_commit_runtime_state`, and `trace_window_bounds`.
+
+**Given** a `tick_snapshot` record is emitted, **When** QA validates the trace schema, **Then** it includes `elapsed_running_ticks`, `round_timer_remaining_ticks`, `hitstop_remaining_ticks`, `presented_running_tick_index`, and `snapshot_summary`.
+
+**Given** an `event_batch` record is emitted, **When** QA validates the trace schema, **Then** it includes `phase_order_namespace_ordinal`, `tick_phase_order`, `within_phase_event_index`, `event_type`, `event_type_ordinal`, `runtime_event_sequence_key`, `presentation_tier`, `idempotency_key`, and `delivery_context_id` for each event.
+
+**Given** a `runtime_state_transition` record is emitted, **When** QA validates the trace schema, **Then** it includes `previous_runtime_state`, `new_runtime_state`, `resume_target_state`, `state_reason`, `pause_reason`, `focus_loss_reason`, `runtime_state_sequence_key`, and transition `idempotency_key`.
+
+**Given** a `catch_up_decision` record is emitted, **When** QA validates the trace schema, **Then** it includes `catch_up_attempt_id`, `catch_up_attempted`, `backlog_tick_count`, `backlog_classification`, `catch_up_ticks_committed`, `remaining_backlog_ticks`, `catch_up_stop_reason`, `blocked_transition_type`, `blocked_tick_index`, `presentation_ack_required`, `presentation_ack_id`, and `presentation_priority_reason`.
+
+**Given** a `rejected_command` record is emitted, **When** QA validates the trace schema, **Then** it includes `command_source`, `command_source_ordinal`, `source_actor_id`, `command_id`, `command_sequence_key`, `target_committed_tick_index`, `target_presented_running_tick_index`, `input_snapshot_id`, `based_on_committed_tick_index`, `based_on_presented_running_tick_index`, `observation_snapshot_id`, `observation_snapshot_hash`, `decision_age_ticks`, `visibility_ack_generation_id`, `script_or_config_id`, `script_or_config_hash`, `command_type`, `command_type_ordinal`, `pressed_or_held`, `runtime_state_at_capture`, `command_acceptance_result`, and `rejection_reason`.
+
+**Given** a `presentation_delivery` or `bound_diagnostic` record is emitted, **When** QA validates the trace schema, **Then** delivery records include `presentation_generation_id`, `delivery_context_id`, `delivery_mode`, `delivery_tick_start`, `delivery_tick_end`, `final_snapshot_committed_tick_index`, `presentation_ack_required`, `presentation_ack_id`, and `stale_policy_result`; bound diagnostics include `bound_exceeded_type`, `configured_limit`, `observed_value`, and `entries_evicted_or_throttled`.
 
 ### AC-FLR-43 — Invalid runtime transitions are rejected with trace warnings
 
@@ -998,19 +1165,29 @@ The `catch_up_stop_reason` output is defined as one of:
 
 ### AC-FLR-48 — Player, dummy, and CPU use the same command entry path
 
-**Given** a player command, training dummy command, and simple CPU command represent the same legal action from the same legal combat state, **When** each command is submitted through the runtime command entry, **Then** each command is evaluated by the same tick-boundary command rules, and each command entry exposes `round_instance_id`, `command_source`, `source_actor_id`, `command_id`, `target_committed_tick_index`, `input_snapshot_id` or `based_on_committed_tick_index`, `command_type`, `pressed_or_held`, and `runtime_state_at_capture`.
+**Given** a player command, training dummy command, and simple CPU command represent the same legal action from the same legal combat state, **When** each command is submitted through the runtime command entry, **Then** each command is evaluated by the same tick-boundary command rules, and each command entry exposes `round_instance_id`, `round_instance_sequence`, `command_source`, `command_source_ordinal`, `source_actor_id`, `command_id`, `command_sequence_key`, `target_committed_tick_index`, `target_presented_running_tick_index` for non-player commands, `input_snapshot_id` for player commands or `based_on_committed_tick_index`, `based_on_presented_running_tick_index`, `observation_snapshot_id`, `observation_snapshot_hash`, and `visibility_ack_generation_id` for CPU/dummy commands, `command_type`, `command_type_ordinal`, `pressed_or_held`, `runtime_state_at_capture`, and `command_acceptance_result`.
+
+**Given** multiple commands target the same committed tick, **When** the runtime builds the command batch, **Then** command order follows `command_sequence_key`, duplicate command IDs are idempotently deduped or rejected, and rejection trace records include a deterministic `rejection_reason`.
 
 ### AC-FLR-49 — CPU commands do not bypass runtime rules or read same-tick hidden state
 
-**Given** the simple CPU script chooses an attack, guard, movement, projectile, or burst command, **When** the command is submitted, **Then** the command is processed in the same command phase as player and dummy commands, cannot bypass countdown, pause, focus suspension, hitstop freeze rules, command timing, state-machine legality, or tick-boundary commitment, and is based only on a previously committed snapshot rather than same-tick player input or half-updated state.
+**Given** the simple CPU script chooses an attack, guard, movement, projectile, or burst command for target committed tick `T`, **When** the command is submitted, **Then** the command is processed in the same batch-staged command phase as player and dummy commands, cannot bypass countdown, pause, focus suspension, hitstop freeze rules, command timing, state-machine legality, or tick-boundary commitment, and command-entry trace shows `command_source = simple_cpu`, `target_committed_tick_index = T`, `target_presented_running_tick_index`, `based_on_presented_running_tick_index`, `observation_snapshot_id`, `observation_snapshot_hash`, `visibility_ack_generation_id`, and `decision_age_ticks >= min_ai_decision_age_ticks`.
+
+**Given** MVP default tuning is active, **When** a CPU command targets presented running tick index `P`, **Then** `min_ai_decision_age_ticks = 6`, so the command must be based on an observation whose `based_on_presented_running_tick_index <= P - 6`; hitstop ticks, pause time, focus-suspended time, recovery-pause time, and unacked catch-up presentation do not count toward those 6 ticks.
+
+**Given** a CPU command references missing, future, same-tick, stale-round, hidden, hash-mismatched, duplicate, too-young, stale-after-interruption, or disallowed observation data, **When** the command is evaluated, **Then** the runtime rejects it with a deterministic `rejection_reason` and no gameplay fact is created.
 
 ### AC-FLR-50 — Training dummy commands do not bypass runtime rules
 
-**Given** the training dummy is configured to perform a command, **When** the command is submitted, **Then** the command is processed through the same command entry path as player and CPU commands, and it cannot directly create hits, blocks, damage, stun, hitstop, energy, combo changes, KO, or timeout events outside the fixed tick order.
+**Given** the training dummy is configured to perform a reactive command for target committed tick `T`, **When** the command is submitted, **Then** the command is processed through the same command entry path as player and CPU commands, is based only on `AIObservationSnapshot` with `decision_age_ticks >= min_ai_decision_age_ticks` using presented running ticks, and it cannot directly create hits, blocks, damage, stun, hitstop, energy, combo changes, KO, or timeout events outside the fixed tick order.
+
+**Given** the training dummy uses a pre-authored scheduled command instead of a reactive command, **When** the command is submitted, **Then** the command must declare `pressed_or_held = scripted`, a stable schedule/config id, and the same target tick validation; it still cannot read same-tick collision/player input/half-updated state.
+
+**Given** the training dummy attempts an auto-block or counter command using same-tick hit/collision/player-input/half-updated state, **When** the command is evaluated, **Then** the runtime rejects it and records `rejection_reason = hidden_state_source`, `future_observation`, `observation_tick_mismatch`, `decision_age_too_young`, or the more specific applicable rejection reason.
 
 ### AC-FLR-51 — MVP tuning defaults are observable and enforced
 
-**Given** the MVP fixed-logic runtime is initialized, **When** QA inspects runtime configuration or startup trace, **Then** the default values are `combat_ticks_per_second = 60`, `catch_up_max_ticks = 6`, `trace_window_ticks = 180`, `countdown_direction_pre_read_enabled = true`, and `focus_restore_requires_explicit_confirm = true`.
+**Given** the MVP fixed-logic runtime is initialized, **When** QA inspects runtime configuration or startup trace, **Then** the default values are `combat_ticks_per_second = 60`, `catch_up_max_ticks = 6`, `catch_up_wall_clock_budget_ms = 4.0`, `trace_window_ticks = 180`, `trace_max_events_per_tick = 32`, `trace_max_payload_bytes_per_entry = 4096`, `trace_max_objects_per_tick = 64`, `trace_warning_throttle_per_second = 10`, `min_ai_decision_age_ticks = 6 presented running ticks`, `host_frame_p95_budget_ms = 16.67`, `host_frame_p99_budget_ms = 25.0`, `runtime_normal_tick_budget_ms = 2.0`, `max_single_frame_stall_ms = 50.0`, `trace_total_memory_budget_bytes = 1048576`, `snapshot_summary_max_bytes = 2048`, `event_batch_max_bytes = 8192`, `ai_observation_snapshot_max_bytes = 2048`, `countdown_direction_pre_read_enabled = true`, and `focus_restore_requires_explicit_confirm = true`.
 
 **And** for MVP builds, `combat_ticks_per_second` remains locked to `60` unless an approved test configuration explicitly overrides it.
 
@@ -1022,21 +1199,39 @@ The `catch_up_stop_reason` output is defined as one of:
 |---|---:|---:|
 | `combat_ticks_per_second` | 30–120; MVP locked 60 | none without ADR |
 | `catch_up_max_ticks` | 2–8 | `0` allowed only in explicit debug/stress config |
+| `catch_up_wall_clock_budget_ms` | 2.0–6.0 ms | lower/higher only in profiling config |
 | `trace_window_ticks` | 120–600 | larger only in temporary QA/dev config |
+| `trace_max_events_per_tick` | 8–64 | larger only in temporary QA/dev config |
+| `trace_max_payload_bytes_per_entry` | 1024–8192 bytes | larger only in temporary QA/dev config |
+| `trace_max_objects_per_tick` | 16–128 | larger only in temporary QA/dev config |
+| `trace_warning_throttle_per_second` | 1–30 warnings/sec | none |
+| `min_ai_decision_age_ticks` | 3–12 presented running ticks; MVP default 6 | below 6 requires design re-review |
+| `host_frame_p95_budget_ms` | <= 16.67 ms target | none without Web profiling sign-off |
+| `host_frame_p99_budget_ms` | 16.67–33.33 ms | none without Web profiling sign-off |
+| `runtime_normal_tick_budget_ms` | 0.5–4.0 ms | none without Runtime ADR |
+| `max_single_frame_stall_ms` | 33.33–100.0 ms | none without Web profiling sign-off |
+| `trace_total_memory_budget_bytes` | 262144–4194304 bytes | larger only in temporary QA/dev config |
+| `snapshot_summary_max_bytes` | 1024–4096 bytes | larger only with data-contract ADR |
+| `event_batch_max_bytes` | 2048–16384 bytes | larger only with data-contract ADR |
+| `ai_observation_snapshot_max_bytes` | 1024–4096 bytes | larger only with data-contract ADR |
 
 ### AC-FLR-53 — Deterministic QA re-simulation of the same test inputs produces the same observable results
 
-**Given** the same initial round state, same tuning values, same player commands, same dummy commands, same CPU script outputs, and same runtime requests, **When** the fixed-logic runtime is executed twice in a deterministic QA test harness, **Then** both runs produce the same committed tick IDs, snapshots, runtime state transitions, and ordered event sequence keys, and no presentation frame rate, HUD, VFX, audio, camera, or Godot physics timing difference changes the authoritative combat result.
+**Given** the same initial round state, same tuning values, same player commands, same dummy commands, same CPU observation snapshots, same CPU script/config hash, same deterministic RNG seed/call counter if randomness is used, and same runtime requests, **When** the fixed-logic runtime is executed twice in a deterministic QA test harness, **Then** both runs produce the same committed tick IDs, snapshots, runtime state transitions, command acceptance/rejection results, and ordered event sequence keys, and no presentation frame rate, HUD, VFX, audio, camera, or Godot physics timing difference changes the authoritative combat result.
 
 This criterion defines a QA/test re-simulation expectation only; it does not create a formal player replay, rollback, spectator, networking, or cross-version replay requirement.
 
 ### AC-FLR-54 — UI runtime state payload supports pause and focus recovery
 
-**Given** the runtime enters `paused`, `focus_suspended`, `recovery_pause`, `countdown`, or `round_ended`, **When** UI/menu/HUD/debug consumers read the runtime state payload, **Then** the payload exposes `runtime_state`, `state_reason`, `previous_runtime_state` or `resume_target_state`, `requires_player_confirm`, `combat_input_policy`, `held_input_cleanup_required`, `countdown_phase`, `backlog_classification`, and `round_instance_id`.
+**Given** the runtime enters `paused`, `focus_suspended`, `countdown`, or `round_ended`, **When** UI/menu/HUD/debug consumers read the runtime state payload, **Then** the payload exposes `runtime_state`, `state_reason`, `pause_reason` when applicable, `focus_loss_reason` when applicable, `previous_runtime_state` or `resume_target_state`, `runtime_state_sequence_key`, `requires_player_confirm`, `combat_input_policy`, `held_input_cleanup_required`, `held_input_cleanup_state`, `countdown_phase`, `backlog_classification`, `round_instance_id`, and `round_instance_sequence`.
+
+**Given** the runtime enters recovery due to unsafe backlog, wall-clock guard, or fairness guard, **When** UI reads the payload, **Then** `runtime_state = paused`, `state_reason = recovery_pause`, `backlog_classification` remains observable, and `runtime_state` is never the value `recovery_pause`.
 
 ### AC-FLR-55 — Trace and instrumentation are bounded for Web
 
-**Given** trace, rejected-request warnings, snapshot summaries, or event batches are emitted, **When** their count or payload size exceeds the configured QA/debug bounds, **Then** old bounded trace data may be evicted or warnings may be throttled, while authoritative combat state and event ordering remain unchanged.
+**Given** trace, rejected-command warnings, snapshot summaries, AI observation snapshots, or event batches are emitted, **When** emitted data exceeds `trace_window_ticks`, `trace_max_events_per_tick`, `trace_max_payload_bytes_per_entry`, `trace_max_objects_per_tick`, `trace_warning_throttle_per_second`, `trace_total_memory_budget_bytes`, `snapshot_summary_max_bytes`, `event_batch_max_bytes`, or `ai_observation_snapshot_max_bytes`, **Then** old bounded debug trace data may be evicted and warnings may be throttled, but authoritative snapshot fields, authoritative event facts, event ordering keys, command acceptance/rejection facts, and AI visibility facts are not truncated or dropped.
+
+**Given** a non-authoritative diagnostic payload is evicted, summarized, or throttled, **When** QA inspects bound diagnostics, **Then** the trace records `bound_exceeded_type`, `configured_limit`, `observed_value`, `entries_evicted_or_throttled`, and `authoritative_fact_loss = false`.
 
 ### AC-FLR-56 — Burst and energy commands use the runtime command and event path
 
@@ -1044,34 +1239,134 @@ This criterion defines a QA/test re-simulation expectation only; it does not cre
 
 ### AC-FLR-57 — Critical readability phase events are observable
 
-**Given** a move transitions through startup, active frames, recovery, or punishable windows, **When** those phase changes are committed, **Then** ordered event batches or snapshot summaries expose enough information for QA and presentation systems to observe `startup_started`, `active_frame_started`, `recovery_started`, `punish_window_opened`, and `punish_window_closed` when those concepts are defined by downstream move/state-machine data.
+**Given** a QA fixture move defines startup, active, recovery, and punishable windows, **When** the move transitions into or out of each phase, **Then** ordered event batches or snapshot summaries expose `actor_id`, `move_id`, `action_tick_index`, `phase_name`, `phase_started_or_ended`, `window_id` when applicable, `committed_tick_index`, and `runtime_event_sequence_key`.
+
+**Given** the fixture reaches each required phase, **When** QA inspects events, **Then** the required observable events are `startup_started`, `active_frame_started`, `recovery_started`, `punish_window_opened`, and `punish_window_closed`.
+
+### AC-FLR-58 — Hitstop input buffering preserves first legal running-tick evaluation
+
+**Given** input is captured during hitstop, **When** hitstop ends and the next legal running tick begins, **Then** the input system receives both committed runtime tick context and running/action-time context, and hitstop-captured input remains eligible for evaluation on that first legal running tick unless the input-buffering GDD explicitly rejects it.
+
+### AC-FLR-59 — Recovery pause uses safe resume countdown
+
+**Given** the runtime enters `runtime_state = paused` with `state_reason = recovery_pause`, **When** the player resumes, **Then** UI shows the recovery reason, held combat inputs are cleaned or reconfirmed, the confirm input is consumed by UI/menu context, `countdown_phase = resume_ready` remains active until at least 0.5 real seconds have elapsed and a visual countdown update is acknowledged, `countdown_phase = resume_go` remains active until at least 0.2 real seconds have elapsed and a visual go update is acknowledged, and no movement, guard, attack, projectile, burst, dummy command, or CPU command executes from the confirm input.
+
+### AC-FLR-60 — Internal menu focus does not become unsafe focus suspension
+
+**Given** the game is intentionally in `paused` and UI focus moves between pause-menu controls, **When** focus metadata is reported to the runtime with `focus_loss_reason = internal_menu_focus` or `hover_change`, **Then** ordinary menu focus movement does not trigger `focus_suspended`.
+
+**Given** focus metadata is reported with `focus_loss_reason` from `{page_hidden, browser_window_blur, canvas_blur, keyboard_focus_lost, fullscreen_gate, audio_unlock_gate}`, **When** the runtime is in `running`, `hitstop`, `paused`, or `countdown`, **Then** the runtime enters `focus_suspended` before any further combat tick advancement.
+
+### AC-FLR-61 — Duplicate presentation delivery does not replay one-shot feedback
+
+**Given** HUD, VFX, audio, camera, or debug consumers receive the same `RuntimePresentationPacket`, event, event batch, or runtime state transition more than once, **When** the consumer processes the duplicate delivery, **Then** the idempotency scope `(presentation_generation_id, round_instance_id, runtime_event_sequence_key or runtime_state_sequence_key, event_type, source_actor_id, target_actor_id, move_id_or_cause)` does not replay one-shot hit sounds, block sounds, whiff sounds, burst sounds, countdown sounds, KO sounds, HUD pulses, VFX bursts, or debug one-shots more than once.
+
+### AC-FLR-62 — Event batch delivery contexts support catch-up compression
+
+**Given** multiple committed event batches are delivered in one host/render frame due to catch-up, **When** HUD/VFX/audio/debug consumers receive them, **Then** `RuntimePresentationPacket.event_batch_delivery_contexts` contains one context per ordered batch with `delivery_mode = catch_up`, `delivery_tick_start`, `delivery_tick_end`, `batch_index_in_delivery`, `batch_count_in_delivery`, `final_snapshot_committed_tick_index`, `presentation_generation_id`, `round_instance_id`, `contains_must_show`, `presentation_ack_required`, and `presentation_ack_id`, allowing non-authoritative presentation compression without dropping or reordering authoritative facts.
+
+### AC-FLR-63 — Snapshot, event, and trace payloads are immutable consumer data
+
+**Given** a presentation, UI, audio, debug, or QA consumer receives snapshot, event, UI state, or trace data, **When** the consumer mutates its local copy or reference, **Then** authoritative combat state is unchanged, and the payload does not expose live Godot `Node`, mutable authority `Resource`, or shared mutable `Array` / `Dictionary` that can change gameplay state.
+
+### AC-FLR-64 — Runtime state transitions are ordered and idempotent
+
+**Given** pause, focus suspension, recovery pause, resume, restart, countdown, or round-end UI state transitions occur outside committed combat tick advancement, **When** presentation consumers inspect them, **Then** each transition exposes `runtime_state_sequence_key`, previous state, new state, state reason, resume target when applicable, confirmation requirement, and `idempotency_key`, and the transition is not represented as a committed combat event.
+
+### AC-FLR-65 — AI-integrated deterministic QA produces the same CPU commands
+
+**Given** the same initial state, same committed `AIObservationSnapshot` stream, same `observation_snapshot_hash` values, same simple CPU `script_or_config_id`, same `script_or_config_hash`, and same deterministic RNG seed/call counter if randomness is used, **When** the CPU decision generator runs twice, **Then** both runs produce the same CPU command entries, same `based_on_committed_tick_index`, same `target_committed_tick_index`, same `decision_age_ticks`, same command acceptance/rejection results, and therefore the same committed snapshots/events after runtime execution.
+
+### AC-FLR-66 — Catch-up event tiers produce the required fairness behavior
+
+**Given** catch-up preflight detects a `fairness_stop_required` fact for delayed tick `T`, **When** the runtime handles the backlog, **Then** tick `T` is not committed during silent catch-up, the runtime remains at the previous committed tick, enters `runtime_state = paused` with `state_reason = recovery_pause`, and records `catch_up_stop_reason = fairness_guard` with `blocked_tick_index = T`.
+
+**Given** catch-up commits a tick containing a `presentation_must_show` fact without a fairness stop, **When** the delivery packet is built, **Then** the delivery context marks `presentation_ack_required = true`, provides `presentation_ack_id`, and blocks later AI/dummy decisions and additional silent catch-up ticks that depend on that fact until visual ack or explicit visual degradation is recorded.
+
+**Given** catch-up emits only `compressible_phase` facts, **When** presentation consumers receive the delivery packet, **Then** authoritative facts remain complete and ordered, while non-authoritative pulse/VFX/audio display may be compressed without changing perceived cause/result order.
+
+### AC-FLR-67 — Catch-up stop reason precedence is deterministic
+
+**Given** multiple catch-up stop conditions become true during the same catch-up attempt, **When** the runtime records `catch_up_stop_reason`, **Then** the selected reason follows this precedence: `focus_suspended`, `invalid_backlog`, `fairness_guard`, `blocking_state`, `presentation_ack_guard`, `wall_clock_guard`, `completed_backlog`, `none`.
+
+**Given** `catch_up_attempted = false`, **When** catch-up classification is `none`, **Then** trace records `catch_up_stop_reason = none`.
+
+**Given** `catch_up_attempted = true`, `remaining_backlog_ticks = 0`, and no focus, invalid backlog, fairness preflight, blocking state, presentation ack, or wall-clock guard applies, **When** catch-up ends, **Then** trace records `catch_up_stop_reason = completed_backlog`.
+
+### AC-FLR-68 — AI observation snapshots expose only fair visible facts
+
+**Given** an `AIObservationSnapshot` is created for CPU or training-dummy decision making, **When** QA validates the snapshot, **Then** it includes `round_instance_id`, `round_instance_sequence`, `committed_tick_index`, `presented_running_tick_index`, `visibility_ack_generation_id`, `tick_execution_state`, `post_commit_runtime_state`, `runtime_state`, each actor's stable id / position / facing / visible action state / visible action phase, HUD-visible health / energy / timer, coarse projectile facts, visible round state, `observation_snapshot_id`, and `observation_snapshot_hash`.
+
+**Given** hidden collision internals, same-tick player input, live Godot nodes, debug-only trace internals, unacked must-show facts, or uncommitted state are available elsewhere in the program, **When** the AI observation snapshot is built, **Then** those hidden facts are absent from the snapshot and cannot affect CPU/dummy command generation.
+
+**Given** the AI decision function is invoked, **When** QA inspects the call boundary, **Then** it receives only value-copy `AIObservationSnapshot`, value-copy `AIConfig`, and deterministic `AIRngStream`, and it cannot access live runtime nodes, mutable Resources, event bus state, input buffers, or debug trace internals.
+
+### AC-FLR-69 — CPU and dummy decisions freeze behind unpresented critical catch-up facts
+
+**Given** catch-up preflight stops before a `fairness_stop_required` tick or a committed packet contains `presentation_ack_required = true`, **When** CPU or training dummy decision generation would create a later command, **Then** decision generation stops or freezes until the player-facing `RuntimePresentationPacket` has visual ack or explicit visual degradation recorded.
+
+**Given** a CPU or dummy command was generated before the critical fact was acknowledged to the player, **When** runtime command entry validates it, **Then** the command is rejected with `rejection_reason = stale_due_to_runtime_interruption`, `decision_age_too_young`, `future_observation`, `observation_tick_mismatch`, or `hidden_state_source` as applicable.
+
+### AC-FLR-70 — Rejected command trace uses a complete reason enum
+
+**Given** a command is rejected by runtime command entry, input policy, observation validation, ordering validation, build-policy validation, or state-machine legality, **When** QA inspects the rejected-command record, **Then** it contains one reason from: `stale_round`, `duplicate_command_id`, `target_tick_already_processing`, `invalid_source_actor`, `invalid_runtime_state`, `missing_observation_snapshot`, `observation_tick_mismatch`, `observation_hash_mismatch`, `duplicate_observation_snapshot_id`, `future_observation`, `decision_age_too_young`, `stale_due_to_runtime_interruption`, `hidden_state_source`, `conflicting_same_actor_command`, `invalid_enum`, `disallowed_by_input_policy`, `qa_fixture_disallowed_in_build`, or `state_machine_rejected`.
+
+**Given** two invalid conditions apply to the same command, **When** the command is rejected, **Then** the runtime uses a deterministic validation order so the same input produces the same `rejection_reason` across repeated QA runs.
+
+### AC-FLR-71 — Runtime presentation delivery is atomic
+
+**Given** runtime presentation data is delivered after one or more committed ticks or state transitions, **When** HUD, VFX, audio, camera, debug, or UI consumers receive it, **Then** the data arrives as one atomic `RuntimePresentationPacket` or equivalent read-only bundle with `presentation_generation_id`, `round_instance_id`, `round_instance_sequence`, `final_snapshot_committed_tick_index`, `delivery_tick_start`, `delivery_tick_end`, `snapshot_summary`, `ordered_event_batches`, `event_batch_delivery_contexts`, `ui_runtime_state_payload`, `runtime_state_transition_records`, `presentation_ack_requirements`, `packet_size_bytes`, and `stale_policy_result`.
+
+**Given** `ordered_event_batches` contains more than one batch, **When** QA validates the packet, **Then** `event_batch_delivery_contexts` contains exactly one context per batch with matching `delivery_context_id`, `batch_index_in_delivery`, and `batch_count_in_delivery`.
+
+**Given** an event batch from tick `T` and a snapshot from tick `T + 2` exist in the same host frame, **When** presentation consumers update, **Then** they cannot pair tick `T` one-shot feedback with tick `T + 2` current values unless the packet explicitly marks that pairing as a catch-up compression result.
+
+### AC-FLR-72 — Quick restart invalidates stale presentation delivery
+
+**Given** quick restart creates a new round instance, **When** the first presentation packet for the new round is delivered, **Then** it uses a new `round_instance_id`, incremented `round_instance_sequence`, incremented `presentation_generation_id`, and `committed_tick_index = 0` initial snapshot.
+
+**Given** a stale command, event batch, snapshot, UI payload, audio/VFX request, debug record, ack, or presentation packet from the old round arrives after restart, **When** consumers validate `round_instance_id`, `round_instance_sequence`, or `presentation_generation_id`, **Then** the stale delivery returns `stale_policy_result = discarded_stale_generation` or `discarded_stale_round`, is not processed as current, and cannot affect current gameplay or one-shot presentation.
+
+### AC-FLR-73 — Web performance budgets are measurable
+
+**Given** the exported Web MVP runs the fixed-runtime profiling scenario, **When** QA collects frame and runtime metrics, **Then** the report measures actual browser/runtime values rather than only checking configured constants, and pass/fail uses: host frame p95 `<= 16.67ms`, host frame p99 `<= 25.0ms`, normal runtime tick work `<= runtime_normal_tick_budget_ms = 2.0ms` in the profiled scenario, catch-up runtime work per host update `<= catch_up_wall_clock_budget_ms = 4.0ms` unless it enters recovery pause, and no single measured visible stall exceeds `max_single_frame_stall_ms = 50.0ms` without a failing diagnostic.
+
+**Given** QA runs the profiling scenario, **When** the scenario is configured, **Then** it uses an exported Web build, one player actor, one training dummy or simple CPU actor, HUD enabled, minimal VFX/audio consumers enabled, debug trace in MVP minimal mode, 60 seconds of simulated round time, at least one scripted hit/block/hitstop sequence, at least one projectile-threat sequence, one forced 5-tick backlog catch-up, one fairness preflight stop, and one quick restart stale-delivery check.
+
+### AC-FLR-74 — Recovery, focus, pause, hitstop, and restart transition matrix is testable
+
+**Given** QA drives each transition row defined in the runtime transition matrix, including running hit/block into hitstop, running KO/timeout into round end, focus loss before the next tick, pause before combat action phase, pause/focus/restart during hitstop, recovery-pause resume, focus restore, quick restart, and round-ended restart, **When** the runtime processes each scenario, **Then** the observed `runtime_state`, `state_reason`, `resume_target_state`, `runtime_state_sequence_key`, `committed_tick_index`, and combat advancement/freeze result match the specified row.
+
+**Given** `recovery_pause_count_per_round` exceeds 2 or 4 in one round, **When** QA inspects runtime diagnostics, **Then** values above 2 produce a warning and values above 4 mark the Web experience test as failed unless an approved Runtime ADR or performance tuning change overrides the threshold.
+
+**Given** `presentation_ack_wait_count_per_round` is greater than 0, **When** QA inspects runtime diagnostics, **Then** each wait has a matching `presentation_ack_id`, ack or degradation result, wait duration, and reason so the team can distinguish expected fairness pauses from broken presentation delivery.
 
 ### Instrumentation Note
 
-The following criteria require explicit QA-facing instrumentation if it does not already exist: ordered event sequence keys, committed snapshot summaries, runtime state transition trace, backlog classification trace, rejected-request warnings, trace window bounds, command-source metadata for player/dummy/CPU command entry, UI runtime state payload, catch-up CPU/fairness guard decisions, and bounded trace payload diagnostics.
+The following criteria require explicit QA-facing instrumentation if it does not already exist: ordered event sequence keys, committed snapshot summaries, runtime state transition trace, backlog classification trace, rejected-command warnings, trace window bounds, command-source metadata for player/dummy/CPU command entry, UI runtime state payload, catch-up wall-clock/fairness guard decisions, catch-up stop reason precedence, AI observation snapshots and hashes, immutable payload diagnostics, atomic runtime presentation packets, event delivery context, stale presentation diagnostics, runtime state sequence keys, Web performance budget metrics, recovery/focus interruption counters, and bounded trace payload diagnostics.
 
 ## Visual/Audio Requirements
 
 本系统不直接拥有视觉资产、音效资产、动画资产或相机表现；它只定义这些表现系统可以信任和消费的 runtime facts。
 
-- Runtime 必须为 HUD、VFX、音效、相机和调试显示提供 committed snapshot summaries、ordered event batches、runtime state payload、tick id、round instance、position context、result type 和 idempotency key。
+- Runtime 必须用原子 `RuntimePresentationPacket` 或等价只读包为 HUD、VFX、音效、相机和调试显示提供 committed snapshot summaries、ordered event batches、runtime state payload、runtime state transition records、逐批 `event_batch_delivery_contexts`、presentation ack requirements、tick id、round instance、`presentation_generation_id`、position context、result type 和 idempotency key。
 - `startup_started`、`active_frame_started`、`recovery_started`、`punish_window_opened`、`punish_window_closed`、`hit_landed`、`blocked`、`whiffed`、`hitstop_started`、`energy_meter_changed`、`burst_started`、`round_ended` 等事件必须足够明确，让表现层不需要自行推断 combat result。
-- VFX、音效、动画、相机震动和 HUD 闪烁可以延迟、压缩或去重表现，但不得改变、补写、删除或重排 authoritative combat facts。
+- VFX、音效、动画、相机震动和 HUD 闪烁可以延迟、压缩或去重表现，但不得改变、补写、删除或重排 authoritative combat facts；对于 `presentation_must_show`，至少一个视觉渠道必须 ack 或明确降级，audio-only ack 不足以恢复依赖该事实的 AI/补跑。
 - hitstop 中允许表现层继续播放已触发的 VFX/音效和 HUD 动画，但不得推进 combat action frames、判定、硬直、timer 或 projectile combat advancement。
-- catch-up 期间 runtime 仍输出完整事件顺序；事件批次必须带有 delivery/catch-up metadata，表现层如何压缩展示由 HUD/VFX/音效 GDD 决定。
-- 表现层如果重复收到同一 event batch，必须用 event sequence key / idempotency key 去重；不得重复造成权威 gameplay 变化。
+- catch-up 期间 runtime 仍输出完整事件顺序；每个事件批次必须带有 `delivery_mode`、`delivery_tick_start`、`delivery_tick_end`、`final_snapshot_committed_tick_index`、`presentation_generation_id`、`contains_must_show`、`presentation_ack_required` 和 `presentation_ack_id`，表现层如何压缩非权威展示由 HUD/VFX/音效 GDD 决定。
+- 表现层如果重复收到同一 packet、state transition record 或 event batch，必须用 `presentation_generation_id`、event sequence key 和 idempotency key 去重；不得重复造成权威 gameplay 变化或重复播放 one-shot 反馈。
 - 本系统不触发 asset-spec 生产；后续 `combat-hud-feedback`、`readable-combat-vfx`、`combat-audio-feedback` 和 `sprite-animation-presentation` GDD 会定义具体资产和表现规格。
 
 ## UI Requirements
 
 本系统不拥有正式玩家 UI 屏幕，但必须向下游 UI、菜单和调试系统暴露稳定状态。
 
-- HUD 必须能读取当前 `round_instance_id`、`committed_tick_index`、runtime state、round timer remaining、ordered event batches 和必要 snapshot summary。
+- HUD 必须能读取当前 `round_instance_id`、`round_instance_sequence`、`committed_tick_index`、runtime state、round timer remaining、ordered event batches、`presentation_generation_id` 和必要 snapshot summary。
 - HUD 当前数值必须以 committed snapshot summary 为权威；event batch 只触发一次性反馈、pulse、音效/VFX 请求或 debug log。若二者冲突，snapshot wins。
 - 暂停菜单和 Web focus recovery UI 必须通过 runtime request 进入/离开 `paused` 或 `focus_suspended`，不得直接修改 combat state。
-- UI runtime state payload 必须表达 `runtime_state`、`state_reason`、`previous_runtime_state` 或 `resume_target_state`、`requires_player_confirm`、`combat_input_policy`、`held_input_cleanup_required`、`countdown_phase`、`backlog_classification`、`round_instance_id`。
+- UI runtime state payload 必须表达 `runtime_state`、`state_reason`、适用时的 `pause_reason`、适用时的 `focus_loss_reason`、`previous_runtime_state` 或 `resume_target_state`、`runtime_state_sequence_key`、`requires_player_confirm`、`combat_input_policy`、`held_input_cleanup_required`、`held_input_cleanup_state`、`countdown_phase`、`backlog_classification`、适用时的 `catch_up_stop_reason`、`presentation_ack_required`、`presentation_ack_id`、`round_instance_id` 和 `round_instance_sequence`。
 - 当 `focus_restore_requires_explicit_confirm = true` 时，UI 必须能表现“恢复焦点后需要确认继续”的状态；确认输入由 UI/menu context 消费，不得作为 combat command 进入移动、防御、攻击、气弹或爆气流程。
-- 调试显示必须能读取 tick id、runtime state、backlog classification、trace window bounds、最近 event sequence keys、rejected request warnings、catch-up guard decisions 和 bounded trace diagnostics。
+- 调试显示必须能读取 tick id、runtime state、backlog classification、trace window bounds、最近 event sequence keys、rejected request warnings、catch-up guard decisions、`catch_up_stop_reason`、presentation stale diagnostics 和 bounded trace diagnostics。
 - UI/HUD/Debug 只读 combat facts；除明确 runtime request（pause、resume、restart、exit）外，不得写入血量、气槽、硬直、判定、timer、combo 或胜负状态。
 
 ## Open Questions

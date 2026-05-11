@@ -248,13 +248,32 @@ formulas:
       - design/gdd/debug-tuning-display.md
       - design/gdd/round-flow-restart.md
     variables:
-      - round_instance_id
+      - round_instance_sequence
       - committed_tick_index
+      - phase_order_namespace_ordinal
       - tick_phase_order
       - within_phase_event_index
     output_range: ["ordered tuple", "ordered tuple"]
-    expression: "(round_instance_id, committed_tick_index, tick_phase_order, within_phase_event_index)"
-    notes: "Used for deterministic event ordering, duplicate handling, and quick-restart separation."
+    expression: "(round_instance_sequence, committed_tick_index, phase_order_namespace_ordinal, tick_phase_order, within_phase_event_index)"
+    notes: "Revised to use explicit namespace ordinals so running, hitstop, and debug/runtime records do not share ambiguous phase order."
+    added: 2026-05-11
+    revised: 2026-05-11
+  - name: runtime_state_sequence_key
+    status: active
+    source: design/gdd/fixed-logic-runtime.md
+    referenced_by:
+      - design/gdd/fixed-logic-runtime.md
+      - design/gdd/web-platform-shell.md
+      - design/gdd/pause-basic-menu.md
+      - design/gdd/round-flow-restart.md
+      - design/gdd/combat-hud-feedback.md
+      - design/gdd/debug-tuning-display.md
+    variables:
+      - round_instance_sequence
+      - state_transition_index
+    output_range: ["ordered tuple", "ordered tuple"]
+    expression: "(round_instance_sequence, state_transition_index)"
+    notes: "Orders non-combat runtime state transitions such as pause, focus suspension, recovery pause, resume, restart, countdown, and round end."
     added: 2026-05-11
     revised: ""
   - name: trace_window_bounds
@@ -288,6 +307,62 @@ formulas:
     notes: "Focus loss wins over backlog catch-up; recovery_pause is a pause reason, not a runtime state."
     added: 2026-05-11
     revised: ""
+  - name: catch_up_wall_clock_guard_exceeded
+    status: active
+    source: design/gdd/fixed-logic-runtime.md
+    referenced_by:
+      - design/gdd/fixed-logic-runtime.md
+      - design/gdd/web-platform-shell.md
+      - design/gdd/pause-basic-menu.md
+      - design/gdd/debug-tuning-display.md
+    variables:
+      - measured_catch_up_wall_clock_ms
+      - catch_up_wall_clock_budget_ms
+    output_range: [false, true]
+    expression: "measured_catch_up_wall_clock_ms >= catch_up_wall_clock_budget_ms"
+    notes: "Stops silent catch-up at a safe tick boundary before runtime work consumes too much of the Web frame budget."
+    added: 2026-05-11
+    revised: ""
+  - name: catch_up_stop_reason
+    status: active
+    source: design/gdd/fixed-logic-runtime.md
+    referenced_by:
+      - design/gdd/fixed-logic-runtime.md
+      - design/gdd/web-platform-shell.md
+      - design/gdd/pause-basic-menu.md
+      - design/gdd/combat-hud-feedback.md
+      - design/gdd/debug-tuning-display.md
+    variables:
+      - catch_up_attempted
+      - focus_lost
+      - backlog_tick_count
+      - catch_up_max_ticks
+      - blocking_state_reached
+      - catch_up_wall_clock_guard_exceeded
+      - catch_up_preflight_required
+      - presentation_ack_required
+      - remaining_backlog_ticks
+    output_range: ["none", "completed_backlog", "wall_clock_guard", "presentation_ack_guard", "blocking_state", "fairness_guard", "focus_suspended", "invalid_backlog"]
+    expression: "focus_suspended > invalid_backlog > fairness_guard > blocking_state > presentation_ack_guard > wall_clock_guard > completed_backlog > none"
+    notes: "Deterministic precedence for explaining why catch-up completed, stopped before a hidden result, waited for presentation ack, or entered recovery_pause."
+    added: 2026-05-11
+    revised: 2026-05-11
+  - name: decision_age_ticks
+    status: active
+    source: design/gdd/fixed-logic-runtime.md
+    referenced_by:
+      - design/gdd/fixed-logic-runtime.md
+      - design/gdd/simple-scripted-cpu.md
+      - design/gdd/training-dummy.md
+      - design/gdd/debug-tuning-display.md
+    variables:
+      - target_presented_running_tick_index
+      - based_on_presented_running_tick_index
+    output_range: [0, "unbounded"]
+    expression: "target_presented_running_tick_index - based_on_presented_running_tick_index"
+    notes: "CPU and training dummy commands must satisfy decision_age_ticks >= min_ai_decision_age_ticks using only player-presented running ticks; hitstop, pause, focus, recovery pause, and unacked catch-up ticks do not count."
+    added: 2026-05-11
+    revised: 2026-05-11
 
 # Example:
 #
@@ -351,6 +426,18 @@ constants:
     unit: ticks
     added: 2026-05-11
     revised: ""
+  - name: catch_up_wall_clock_budget_ms
+    status: active
+    source: design/gdd/fixed-logic-runtime.md
+    referenced_by:
+      - design/gdd/fixed-logic-runtime.md
+      - design/gdd/web-platform-shell.md
+      - design/gdd/pause-basic-menu.md
+      - design/gdd/debug-tuning-display.md
+    value: 4.0
+    unit: milliseconds
+    added: 2026-05-11
+    revised: ""
   - name: trace_window_ticks
     status: active
     source: design/gdd/fixed-logic-runtime.md
@@ -359,6 +446,161 @@ constants:
       - design/gdd/debug-tuning-display.md
     value: 180
     unit: ticks
+    added: 2026-05-11
+    revised: ""
+  - name: trace_max_events_per_tick
+    status: active
+    source: design/gdd/fixed-logic-runtime.md
+    referenced_by:
+      - design/gdd/fixed-logic-runtime.md
+      - design/gdd/debug-tuning-display.md
+    value: 32
+    unit: events
+    added: 2026-05-11
+    revised: ""
+  - name: trace_max_payload_bytes_per_entry
+    status: active
+    source: design/gdd/fixed-logic-runtime.md
+    referenced_by:
+      - design/gdd/fixed-logic-runtime.md
+      - design/gdd/debug-tuning-display.md
+    value: 4096
+    unit: bytes
+    added: 2026-05-11
+    revised: ""
+  - name: trace_max_objects_per_tick
+    status: active
+    source: design/gdd/fixed-logic-runtime.md
+    referenced_by:
+      - design/gdd/fixed-logic-runtime.md
+      - design/gdd/debug-tuning-display.md
+    value: 64
+    unit: objects
+    added: 2026-05-11
+    revised: ""
+  - name: trace_warning_throttle_per_second
+    status: active
+    source: design/gdd/fixed-logic-runtime.md
+    referenced_by:
+      - design/gdd/fixed-logic-runtime.md
+      - design/gdd/debug-tuning-display.md
+    value: 10
+    unit: warnings_per_second
+    added: 2026-05-11
+    revised: ""
+  - name: min_ai_decision_age_ticks
+    status: active
+    source: design/gdd/fixed-logic-runtime.md
+    referenced_by:
+      - design/gdd/fixed-logic-runtime.md
+      - design/gdd/simple-scripted-cpu.md
+      - design/gdd/training-dummy.md
+      - design/gdd/debug-tuning-display.md
+    value: 6
+    unit: presented_running_ticks
+    added: 2026-05-11
+    revised: 2026-05-11
+  - name: host_frame_p95_budget_ms
+    status: active
+    source: design/gdd/fixed-logic-runtime.md
+    referenced_by:
+      - design/gdd/fixed-logic-runtime.md
+      - design/gdd/web-platform-shell.md
+      - design/gdd/debug-tuning-display.md
+    value: 16.67
+    unit: milliseconds
+    added: 2026-05-11
+    revised: ""
+  - name: host_frame_p99_budget_ms
+    status: active
+    source: design/gdd/fixed-logic-runtime.md
+    referenced_by:
+      - design/gdd/fixed-logic-runtime.md
+      - design/gdd/web-platform-shell.md
+      - design/gdd/debug-tuning-display.md
+    value: 25.0
+    unit: milliseconds
+    added: 2026-05-11
+    revised: ""
+  - name: runtime_normal_tick_budget_ms
+    status: active
+    source: design/gdd/fixed-logic-runtime.md
+    referenced_by:
+      - design/gdd/fixed-logic-runtime.md
+      - design/gdd/web-platform-shell.md
+      - design/gdd/debug-tuning-display.md
+    value: 2.0
+    unit: milliseconds
+    added: 2026-05-11
+    revised: ""
+  - name: catch_up_attempt_budget_ms
+    status: deprecated
+    source: design/gdd/fixed-logic-runtime.md
+    referenced_by:
+      - design/gdd/fixed-logic-runtime.md
+      - design/gdd/web-platform-shell.md
+      - design/gdd/pause-basic-menu.md
+      - design/gdd/debug-tuning-display.md
+    value: 4.0
+    unit: milliseconds
+    added: 2026-05-11
+    revised: 2026-05-11
+    notes: "Deprecated alias; use catch_up_wall_clock_budget_ms for the single catch-up wall-clock guard and profiling budget."
+  - name: max_single_frame_stall_ms
+    status: active
+    source: design/gdd/fixed-logic-runtime.md
+    referenced_by:
+      - design/gdd/fixed-logic-runtime.md
+      - design/gdd/web-platform-shell.md
+      - design/gdd/debug-tuning-display.md
+    value: 50.0
+    unit: milliseconds
+    added: 2026-05-11
+    revised: ""
+  - name: trace_total_memory_budget_bytes
+    status: active
+    source: design/gdd/fixed-logic-runtime.md
+    referenced_by:
+      - design/gdd/fixed-logic-runtime.md
+      - design/gdd/debug-tuning-display.md
+    value: 1048576
+    unit: bytes
+    added: 2026-05-11
+    revised: ""
+  - name: snapshot_summary_max_bytes
+    status: active
+    source: design/gdd/fixed-logic-runtime.md
+    referenced_by:
+      - design/gdd/fixed-logic-runtime.md
+      - design/gdd/combat-hud-feedback.md
+      - design/gdd/debug-tuning-display.md
+    value: 2048
+    unit: bytes
+    added: 2026-05-11
+    revised: ""
+  - name: event_batch_max_bytes
+    status: active
+    source: design/gdd/fixed-logic-runtime.md
+    referenced_by:
+      - design/gdd/fixed-logic-runtime.md
+      - design/gdd/combat-hud-feedback.md
+      - design/gdd/readable-combat-vfx.md
+      - design/gdd/combat-audio-feedback.md
+      - design/gdd/debug-tuning-display.md
+    value: 8192
+    unit: bytes
+    added: 2026-05-11
+    revised: ""
+  - name: ai_observation_snapshot_max_bytes
+    status: active
+    source: design/gdd/fixed-logic-runtime.md
+    referenced_by:
+      - design/gdd/fixed-logic-runtime.md
+      - design/gdd/simple-scripted-cpu.md
+      - design/gdd/training-dummy.md
+      - design/gdd/debug-tuning-display.md
+    value: 2048
+    unit: bytes
     added: 2026-05-11
     revised: ""
 

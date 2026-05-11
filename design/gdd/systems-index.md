@@ -67,7 +67,7 @@ MVP 只验证一个核心假设：玩家能否通过读招、防御、抓硬直�
 
 | # | System Name | Category | Priority | Status | Design Doc | Depends On |
 |---|-------------|----------|----------|--------|------------|------------|
-| 1 | 固定逻辑步进与战斗运行时 | Foundation | MVP | Revised — Pending Re-review | design/gdd/fixed-logic-runtime.md | — |
+| 1 | 固定逻辑步进与战斗运行时 | Foundation | MVP | Revised — Pending Fresh Re-review | design/gdd/fixed-logic-runtime.md | — |
 | 2 | 输入映射与输入缓冲 | Foundation | MVP | Not Started | design/gdd/input-buffering.md | 1 |
 | 3 | 角色数据与招式数据 | Foundation | MVP | Not Started | design/gdd/character-move-data.md | — |
 | 4 | 动画帧数据与资产元数据 | Foundation | MVP | Not Started | design/gdd/animation-frame-metadata.md | 3, 25 |
@@ -81,8 +81,8 @@ MVP 只验证一个核心假设：玩家能否通过读招、防御、抓硬直�
 | 12 | 气槽与爆气反杀 | Core | MVP | Not Started | design/gdd/energy-meter-burst-reversal.md | 3, 6, 7, 8, 9, 10, 11 |
 | 13 | 气弹 / 能量攻击 | Feature | MVP | Not Started | design/gdd/energy-projectile.md | 3, 4, 6, 7, 8, 9, 10, 12 |
 | 14 | 对局流程与快速重开 | Feature | MVP | Not Started | design/gdd/round-flow-restart.md | 1, 2, 8, 12, 22 |
-| 15 | 训练木桩 | Feature | MVP | Not Started | design/gdd/training-dummy.md | 6, 7, 8, 9, 10, 18 |
-| 16 | 简单脚本 CPU | Feature | MVP | Not Started | design/gdd/simple-scripted-cpu.md | 5, 6, 7, 8, 9, 10, 11, 12, 14 |
+| 15 | 训练木桩 | Feature | MVP | Not Started | design/gdd/training-dummy.md | 1, 6, 7, 8, 9, 10, 18 |
+| 16 | 简单脚本 CPU | Feature | MVP | Not Started | design/gdd/simple-scripted-cpu.md | 1, 5, 6, 7, 8, 9, 10, 11, 12, 14 |
 | 17 | 星核拳馆场景与战斗相机 | Presentation | MVP | Not Started | design/gdd/starcore-gym-camera.md | 5, 14, 25 |
 | 18 | HUD 与战斗信息反馈 | Presentation | MVP | Not Started | design/gdd/combat-hud-feedback.md | 8, 12, 14, 22 |
 | 19 | VFX 可读性系统 | Presentation | MVP | Not Started | design/gdd/readable-combat-vfx.md | 4, 7, 8, 9, 10, 12, 13, 25 |
