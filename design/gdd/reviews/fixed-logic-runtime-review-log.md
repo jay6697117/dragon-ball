@@ -44,3 +44,21 @@ Blocking items: 8 | Recommended: 4
 Summary: The fifth full re-review found the runtime foundation still creatively sound but not yet implementation-safe: `presented_running_tick_index`, presentation display-watermark semantics, CPU/training-dummy fairness, catch-up preflight/precedence, event and packet idempotency, Web budgets, QA criteria, and ADR gates needed stronger contracts. The GDD was revised the same day to define display-watermark ack, MVP CPU/dummy deterministic fairness, small-step Web catch-up, corrected catch-up stop precedence, idempotent packet/audio/UI contracts, measurable Web budgets, QA schemas, ADR gates, and registry consistency.
 Prior verdict resolved: No — fourth-review blockers were narrowed, but fifth review still found structural implementation gaps.
 Revision status: Revised 2026-05-11; pending fresh re-review
+
+## Review — 2026-05-12 — Verdict: MAJOR REVISION NEEDED
+
+Scope signal: XL
+Specialists: game-designer, systems-designer, qa-lead, godot-specialist, performance-analyst, gameplay-programmer, ux-designer, ui-programmer, audio-director, ai-programmer, creative-director
+Blocking items: 10 | Recommended: 5
+Summary: The sixth full re-review confirmed the fixed-runtime direction is still aligned with readable, fair combat, but implementation remained unsafe because AC-FLR-73 contradicted the small-step catch-up policy, `presentation_ack_wait` and `presented_running_tick_index` were still ambiguous, key readability phases could be compressed, AI/dummy fairness needed mode separation, and Godot/Web ADR gates and profiling criteria were not yet concrete enough. The GDD was revised to resolve the 5-tick catch-up contradiction, fully protect startup/active/recovery/punish/control-return facts, canonicalize ack wait under `runtime_state = paused`, add normal-tick presented-watermark auto-advance, split dummy fairness modes, tier ACs, strengthen Web profiling and payload-budget contracts, and sync registry terminology.
+Prior verdict resolved: Partially — fifth-review blockers were narrowed, but sixth review still found structural implementation gaps before this revision.
+Revision status: Revised 2026-05-12; pending fresh re-review
+
+## Review — 2026-05-12 — Verdict: MAJOR REVISION NEEDED
+
+Scope signal: XL
+Specialists: game-designer, systems-designer, qa-lead, godot-specialist, performance-analyst, gameplay-programmer, ux-designer, ui-programmer, audio-director, ai-programmer, technical-artist, creative-director
+Blocking items: 12 | Recommended: 5
+Summary: The seventh fresh re-review confirmed the fixed-runtime direction is still creatively aligned, but implementation remained unsafe because Web profiling methodology, presentation ack lifecycle, display-watermark readability proof, catch-up tier consistency, recovery UX, AI/dummy visibility enforcement, ADR gates, audio degradation, and trace/payload budgets still lacked enforceable contracts. The GDD was revised to separate real browser profiling from synthetic backlog conformance, add conservative visual ack/degradation, map must-show facts to minimum visual cues, harden presented-watermark and decision-age validation, split audio degradation from focus suspension, add explicit ack/watermark/audio ACs, and sync registry constants.
+Prior verdict resolved: Partially — sixth-review blockers were narrowed, but seventh fresh re-review still found contract gaps before this revision.
+Revision status: Revised 2026-05-12; pending fresh re-review

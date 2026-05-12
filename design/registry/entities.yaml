@@ -37,7 +37,7 @@
 #   Each entry: name, status, source, referenced_by[], attributes{}, added, revised
 
 version: 1
-last_updated: "2026-05-11"
+last_updated: "2026-05-12"
 
 # ─── ENTITIES ────────────────────────────────────────────────────────────────
 # Named game-world objects: enemies, NPCs, characters, factions, bosses.
@@ -339,7 +339,7 @@ formulas:
       - catch_up_max_ticks
       - blocking_state_reached
       - catch_up_wall_clock_guard_exceeded
-      - catch_up_preflight_required
+      - fairness_stop_required
       - presentation_ack_required
       - remaining_backlog_ticks
     output_range: ["none", "completed_backlog", "wall_clock_guard", "presentation_ack_guard", "blocking_state", "fairness_guard", "focus_suspended", "invalid_backlog"]
@@ -359,12 +359,13 @@ formulas:
     variables:
       - presented_running_tick_index_current
       - next_unpresented_running_tick_index
-      - display_watermark_result
+      - running_presentation_advance_policy
+      - running_presentation_advance_result
     output_range: [0, "unbounded"]
-    expression: "advance by 1 only when the next running tick reaches display watermark or explicit visual degradation; otherwise hold current value"
-    notes: "Defines the player-visible running-time watermark used by CPU/dummy fairness, catch-up visibility, HUD/debug display, and decision_age_ticks. It is monotonic and advances only in running-tick order."
+    expression: "advance by 1 only when the next sequential running tick has a valid policy/result pair: auto_advance plus auto_advanced, or display_watermark_required plus acknowledged/visually_degraded; otherwise hold current value"
+    notes: "Defines the player-visible running-time watermark used by CPU/dummy fairness, catch-up visibility, HUD/debug display, and decision_age_ticks. It is monotonic, advances only in running-tick order from the committed-to-presented-running map, normal ticks auto-advance only after primary snapshot consumer reaches a host-frame boundary, and stale or mismatched ack responses never advance the watermark."
     added: 2026-05-11
-    revised: 2026-05-11
+    revised: 2026-05-12
   - name: decision_age_ticks
     status: active
     source: design/gdd/fixed-logic-runtime.md
@@ -376,11 +377,13 @@ formulas:
     variables:
       - target_presented_running_tick_index
       - based_on_presented_running_tick_index
-    output_range: [0, "unbounded"]
-    expression: "target_presented_running_tick_index - based_on_presented_running_tick_index"
-    notes: "CPU and training dummy commands must satisfy decision_age_ticks >= min_ai_decision_age_ticks using only player-presented running ticks; hitstop, pause, focus, recovery pause, and unacked catch-up ticks do not count."
+      - min_ai_decision_age_ticks
+      - decision_age_ticks_raw
+    output_range: ["negative before validation", "unbounded"]
+    expression: "decision_age_ticks_raw = target_presented_running_tick_index - based_on_presented_running_tick_index; accepted decision_age_ticks exists only when raw >= min_ai_decision_age_ticks"
+    notes: "Simple CPU and fair-reactive dummy commands must satisfy decision_age_ticks >= min_ai_decision_age_ticks using only player-presented running ticks; negative raw values are invalid and rejected as future_observation or invalid_presented_tick_mapping. The 6-tick runtime value is a technical floor, not a first-round/simple CPU gameplay default; downstream CPU tuning must use at least 12 presented running ticks for first-round/simple profiles. Passive, scheduled-script, and QA fixture dummy modes use separate validation rules defined in fixed-logic-runtime."
     added: 2026-05-11
-    revised: 2026-05-11
+    revised: 2026-05-12
 
 # Example:
 #
@@ -519,7 +522,34 @@ constants:
     value: 6
     unit: presented_running_ticks
     added: 2026-05-11
-    revised: 2026-05-11
+    revised: 2026-05-12
+    notes: "Technical minimum fair-reactive delay for simple CPU and fair-reactive dummy commands. First-round/simple CPU gameplay defaults must be at least 12 presented running ticks in downstream CPU tuning. Passive, scheduled-script, and QA fixture dummy modes are validated separately and may not read hidden same-tick state."
+  - name: combat_critical_ack_deadline_ms
+    status: active
+    source: design/gdd/fixed-logic-runtime.md
+    referenced_by:
+      - design/gdd/fixed-logic-runtime.md
+      - design/gdd/combat-hud-feedback.md
+      - design/gdd/readable-combat-vfx.md
+      - design/gdd/debug-tuning-display.md
+    value: 50
+    unit: milliseconds
+    added: 2026-05-12
+    revised: ""
+    notes: "Default deadline for combat-critical must-show cues to ack, visually degrade, or fail terminally; normal-combat spatial facts require combat-layer proof and cannot be satisfied by HUD-only or audio-only delivery."
+  - name: presentation_ack_deadline_ms
+    status: active
+    source: design/gdd/fixed-logic-runtime.md
+    referenced_by:
+      - design/gdd/fixed-logic-runtime.md
+      - design/gdd/combat-hud-feedback.md
+      - design/gdd/readable-combat-vfx.md
+      - design/gdd/debug-tuning-display.md
+    value: 250
+    unit: milliseconds
+    added: 2026-05-12
+    revised: 2026-05-12
+    notes: "Default bounded wait for non-combat UI, recovery prompt, or debug-overlay visual ack before equivalent visual degradation is required. Combat-critical cues use combat_critical_ack_deadline_ms. Audio-only delivery cannot satisfy this ack."
   - name: host_frame_p95_budget_ms
     status: active
     source: design/gdd/fixed-logic-runtime.md
@@ -578,6 +608,30 @@ constants:
     unit: milliseconds
     added: 2026-05-11
     revised: ""
+  - name: profiling_heap_growth_fail_bytes
+    status: active
+    source: design/gdd/fixed-logic-runtime.md
+    referenced_by:
+      - design/gdd/fixed-logic-runtime.md
+      - design/gdd/web-platform-shell.md
+      - design/gdd/debug-tuning-display.md
+    value: 4194304
+    unit: bytes_over_60_seconds
+    added: 2026-05-12
+    revised: ""
+    notes: "Blocking Web profiling fail threshold for steady-state heap growth over a 60-second run."
+  - name: profiling_gc_pause_fail_ms
+    status: active
+    source: design/gdd/fixed-logic-runtime.md
+    referenced_by:
+      - design/gdd/fixed-logic-runtime.md
+      - design/gdd/web-platform-shell.md
+      - design/gdd/debug-tuning-display.md
+    value: 8.0
+    unit: milliseconds
+    added: 2026-05-12
+    revised: ""
+    notes: "Blocking Web profiling fail threshold when browser/runtime exposes GC pause data; unavailable metrics must be reported explicitly."
   - name: trace_total_memory_budget_bytes
     status: active
     source: design/gdd/fixed-logic-runtime.md
