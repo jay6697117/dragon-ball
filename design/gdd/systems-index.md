@@ -67,8 +67,8 @@ MVP 只验证一个核心假设：玩家能否通过读招、防御、抓硬直�
 
 | # | System Name | Category | Priority | Status | Design Doc | Depends On |
 |---|-------------|----------|----------|--------|------------|------------|
-| 1 | 固定逻辑步进与战斗运行时 | Foundation | MVP | Revised after seventh fresh review — Pending Fresh Re-review | design/gdd/fixed-logic-runtime.md | — |
-| 2 | 输入映射与输入缓冲 | Foundation | MVP | Not Started | design/gdd/input-buffering.md | 1 |
+| 1 | 固定逻辑步进与战斗运行时 | Foundation | MVP | Revised after ninth fresh review — Pending Fresh Re-review | design/gdd/fixed-logic-runtime.md | — |
+| 2 | 输入映射与输入缓冲 | Foundation | MVP | Draft Skeleton | design/gdd/input-buffering.md | 1 |
 | 3 | 角色数据与招式数据 | Foundation | MVP | Not Started | design/gdd/character-move-data.md | — |
 | 4 | 动画帧数据与资产元数据 | Foundation | MVP | Not Started | design/gdd/animation-frame-metadata.md | 3, 25 |
 | 5 | 移动与距离控制 | Core | MVP | Not Started | design/gdd/movement-spacing.md | 1, 2, 3 |
@@ -288,7 +288,7 @@ VFX needs combat events to show hits, blocks, bursts, and whiffs; combat feedbac
 | Metric | Count |
 |--------|-------|
 | Total systems identified | 30 |
-| Design docs started | 1 |
+| Design docs started | 2 |
 | Design docs reviewed | 1 |
 | Design docs approved | 0 |
 | MVP systems designed | 1/26 |
@@ -302,6 +302,6 @@ VFX needs combat events to show hits, blocks, bursts, and whiffs; combat feedbac
 
 - [x] Run CD-SYSTEMS review in Full mode.
 - [x] Start first MVP GDD: `/design-system fixed-logic-runtime`.
-- [ ] Re-run `/design-review design/gdd/fixed-logic-runtime.md` in a fresh session after the seventh fresh-review MAJOR REVISION fixes.
-- [ ] After re-review approval, run `/map-systems next` to pick the highest-priority undesigned system (`input-buffering`).
+- [ ] Re-run `/design-review design/gdd/fixed-logic-runtime.md` in a fresh session after the ninth fresh-review MAJOR REVISION fixes.
+- [x] Start next MVP GDD: `input-buffering` skeleton.
 - [ ] Run `/gate-check pre-production` when MVP systems are designed and reviewed.

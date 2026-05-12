@@ -62,3 +62,12 @@ Blocking items: 12 | Recommended: 5
 Summary: The seventh fresh re-review confirmed the fixed-runtime direction is still creatively aligned, but implementation remained unsafe because Web profiling methodology, presentation ack lifecycle, display-watermark readability proof, catch-up tier consistency, recovery UX, AI/dummy visibility enforcement, ADR gates, audio degradation, and trace/payload budgets still lacked enforceable contracts. The GDD was revised to separate real browser profiling from synthetic backlog conformance, add conservative visual ack/degradation, map must-show facts to minimum visual cues, harden presented-watermark and decision-age validation, split audio degradation from focus suspension, add explicit ack/watermark/audio ACs, and sync registry constants.
 Prior verdict resolved: Partially — sixth-review blockers were narrowed, but seventh fresh re-review still found contract gaps before this revision.
 Revision status: Revised 2026-05-12; pending fresh re-review
+
+## Review — 2026-05-12 — Verdict: MAJOR REVISION NEEDED
+
+Scope signal: XL
+Specialists: game-designer, systems-designer, qa-lead, godot-specialist, performance-analyst, gameplay-programmer, ux-designer, ui-programmer, audio-director, ai-programmer, technical-artist, technical-director, creative-director
+Blocking items: 10 | Recommended: 5
+Summary: The ninth fresh re-review found the fixed-runtime design direction correct but still not implementation-ready because live-exchange recovery, successful presentation ack waits, catch-up preflight knowledge source, presentation tiering, ack lifecycle immutability, AI visibility enforcement, Web profiling device class, and QA thresholds still needed enforceable contracts. The GDD was revised the same day to require safe-neutral recovery for interrupted normal matches, deterministic fail-closed preflight, a `normal_realtime_critical` presentation tier, append-only ack response records, defined visibility/epoch/profile validation contracts, aligned recovery thresholds, and a default MVP profiling device class.
+Prior verdict resolved: Partially — eighth-review fixes narrowed the issues, but ninth fresh re-review still found implementation-blocking contract gaps before this revision.
+Revision status: Revised 2026-05-12; pending fresh re-review

@@ -363,7 +363,7 @@ formulas:
       - running_presentation_advance_result
     output_range: [0, "unbounded"]
     expression: "advance by 1 only when the next sequential running tick has a valid policy/result pair: auto_advance plus auto_advanced, or display_watermark_required plus acknowledged/visually_degraded; otherwise hold current value"
-    notes: "Defines the player-visible running-time watermark used by CPU/dummy fairness, catch-up visibility, HUD/debug display, and decision_age_ticks. It is monotonic, advances only in running-tick order from the committed-to-presented-running map, normal ticks auto-advance only after primary snapshot consumer reaches a host-frame boundary, and stale or mismatched ack responses never advance the watermark."
+    notes: "Defines the player-visible running-time watermark used by CPU/dummy fairness, catch-up visibility, HUD/debug display, and decision_age_ticks. It is monotonic, advances only in running-tick order from the committed-to-presented-running map. Normal ticks auto-advance only after the runtime_presentation_coordinator primary snapshot consumer reaches a host-frame boundary; must-show facts require valid acknowledged/visually_degraded ack response records, and stale or mismatched ack responses never advance the watermark."
     added: 2026-05-11
     revised: 2026-05-12
   - name: decision_age_ticks
@@ -381,7 +381,7 @@ formulas:
       - decision_age_ticks_raw
     output_range: ["negative before validation", "unbounded"]
     expression: "decision_age_ticks_raw = target_presented_running_tick_index - based_on_presented_running_tick_index; accepted decision_age_ticks exists only when raw >= min_ai_decision_age_ticks"
-    notes: "Simple CPU and fair-reactive dummy commands must satisfy decision_age_ticks >= min_ai_decision_age_ticks using only player-presented running ticks; negative raw values are invalid and rejected as future_observation or invalid_presented_tick_mapping. The 6-tick runtime value is a technical floor, not a first-round/simple CPU gameplay default; downstream CPU tuning must use at least 12 presented running ticks for first-round/simple profiles. Passive, scheduled-script, and QA fixture dummy modes use separate validation rules defined in fixed-logic-runtime."
+    notes: "Simple CPU and fair-reactive dummy commands must satisfy decision_age_ticks >= min_ai_decision_age_ticks using only player-presented running ticks; negative raw values are invalid and rejected as future_observation or invalid_presented_tick_mapping. The 6-tick runtime value is a technical floor, not a first-round/simple CPU gameplay default; exported first-round/simple CPU profiles must validate configured_min_decision_age_ticks >= 12 before countdown. Passive, scheduled-script, and QA fixture dummy modes use separate validation rules defined in fixed-logic-runtime."
     added: 2026-05-11
     revised: 2026-05-12
 
@@ -535,8 +535,8 @@ constants:
     value: 50
     unit: milliseconds
     added: 2026-05-12
-    revised: ""
-    notes: "Default deadline for combat-critical must-show cues to ack, visually degrade, or fail terminally; normal-combat spatial facts require combat-layer proof and cannot be satisfied by HUD-only or audio-only delivery."
+    revised: 2026-05-12
+    notes: "Default hard cap for combat-critical cues to ack, visually degrade, or fail terminally at the next host-frame boundary or 50ms, whichever exposes the deadline first. Missed host-frame deadlines must be diagnosed and degraded/failed; normal-combat spatial facts require combat-layer proof and cannot be satisfied by HUD-only or audio-only delivery."
   - name: presentation_ack_deadline_ms
     status: active
     source: design/gdd/fixed-logic-runtime.md
