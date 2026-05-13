@@ -2,7 +2,7 @@
 
 > **Status**: Reviewed — CD-SYSTEMS concerns accepted; GDD authoring in progress
 > **Created**: 2026-05-10
-> **Last Updated**: 2026-05-11
+> **Last Updated**: 2026-05-13
 > **Source Concept**: design/gdd/game-concept.md
 > **Art Bible**: design/art/art-bible.md
 
@@ -68,7 +68,7 @@ MVP 只验证一个核心假设：玩家能否通过读招、防御、抓硬直�
 | # | System Name | Category | Priority | Status | Design Doc | Depends On |
 |---|-------------|----------|----------|--------|------------|------------|
 | 1 | 固定逻辑步进与战斗运行时 | Foundation | MVP | Revised after ninth fresh review — Pending Fresh Re-review | design/gdd/fixed-logic-runtime.md | — |
-| 2 | 输入映射与输入缓冲 | Foundation | MVP | Draft Skeleton | design/gdd/input-buffering.md | 1 |
+| 2 | 输入映射与输入缓冲 | Foundation | MVP | Revised after fresh re-review — Pending Fresh Re-review | design/gdd/input-buffering.md | 1 |
 | 3 | 角色数据与招式数据 | Foundation | MVP | Not Started | design/gdd/character-move-data.md | — |
 | 4 | 动画帧数据与资产元数据 | Foundation | MVP | Not Started | design/gdd/animation-frame-metadata.md | 3, 25 |
 | 5 | 移动与距离控制 | Core | MVP | Not Started | design/gdd/movement-spacing.md | 1, 2, 3 |
@@ -289,9 +289,9 @@ VFX needs combat events to show hits, blocks, bursts, and whiffs; combat feedbac
 |--------|-------|
 | Total systems identified | 30 |
 | Design docs started | 2 |
-| Design docs reviewed | 1 |
+| Design docs reviewed | 2 |
 | Design docs approved | 0 |
-| MVP systems designed | 1/26 |
+| MVP systems designed | 2/26 |
 | Vertical Slice systems designed | 0/1 |
 | Alpha systems designed | 0/2 |
 | Full Vision systems designed | 0/1 |
@@ -304,4 +304,8 @@ VFX needs combat events to show hits, blocks, bursts, and whiffs; combat feedbac
 - [x] Start first MVP GDD: `/design-system fixed-logic-runtime`.
 - [ ] Re-run `/design-review design/gdd/fixed-logic-runtime.md` in a fresh session after the ninth fresh-review MAJOR REVISION fixes.
 - [x] Start next MVP GDD: `input-buffering` skeleton.
+- [x] Complete `input-buffering` draft sections.
+- [x] Run `/design-review design/gdd/input-buffering.md`.
+- [x] Re-run `/design-review design/gdd/input-buffering.md` in a fresh session after the first full-review MAJOR REVISION fixes.
+- [ ] Re-run `/design-review design/gdd/input-buffering.md` in a fresh session after the fresh re-review MAJOR REVISION fixes.
 - [ ] Run `/gate-check pre-production` when MVP systems are designed and reviewed.
