@@ -1,6 +1,6 @@
 # 输入映射与输入缓冲
 
-> **Status**: Revised — latest fresh re-review MAJOR REVISION blockers addressed; Pending Fresh Re-review
+> **Status**: Revised — latest full re-review MAJOR REVISION blockers addressed; Pending Fresh Re-review
 > **Author**: SteveZhang + Claude Code Game Studios
 > **Last Updated**: 2026-05-13
 > **Implements Pillar**: 读招定胜负；短连招，高回合；第一回合必须好玩
@@ -8,7 +8,7 @@
 > **Priority**: MVP
 > **Layer**: Foundation
 > **Depends On**: design/gdd/fixed-logic-runtime.md
-> **Design Review**: MAJOR REVISION NEEDED 2026-05-13 on first full review; revised same day. Fresh re-review on 2026-05-13 again found MAJOR REVISION NEEDED because input authority, one-shot lifecycle, held guard/direction semantics, UI routing, accessibility, performance measurement, schemas, and QA ownership were still not implementation-ready. Latest fresh re-review on 2026-05-13 again found MAJOR REVISION NEEDED because same-frame high-value command conflict, guard+attack option-select risk, UI context routing, Accessibility profile details, toggle guard lifecycle, player-visible feedback, remap scope, ghosting fallback, and player-experience ACs were not implementation-ready. This revision hardens those contracts and remains pending fresh re-review.
+> **Design Review**: MAJOR REVISION NEEDED 2026-05-13 on first full review; revised same day. Fresh re-review on 2026-05-13 again found MAJOR REVISION NEEDED because input authority, one-shot lifecycle, held guard/direction semantics, UI routing, accessibility, performance measurement, schemas, and QA ownership were still not implementation-ready. Later fresh re-review on 2026-05-13 again found MAJOR REVISION NEEDED because same-frame high-value command conflict, guard+attack option-select risk, UI context routing, Accessibility profile details, toggle guard lifecycle, player-visible feedback, remap scope, ghosting fallback, and player-experience ACs were not implementation-ready. Latest full re-review on 2026-05-13 again found MAJOR REVISION NEEDED because runtime/input authority, catch-up semantics, UI routing, keyboard-only Web shell, accessibility scope, Burst/guard trust rules, performance measurement, trace budgets and AC ownership remained unresolved. This revision aligns those contracts and remains pending fresh re-review.
 
 ## Overview
 
@@ -34,9 +34,9 @@
    | `alternate_keyboard_profile` | 避开常见浏览器快捷键、键盘 ghosting 和低端键盘 rollover 风险。 | WASD = direction；J = held guard；K = light；L = heavy；I = projectile；O = burst；P = pause。 | Enter = confirm；N = cancel；WASD 或 Arrow keys 可用于 UI navigation only when UI owns context。 | 无 combat assist；不得扩大 combat buffer。 | key bindings、profile id、ghosting combo set id、same-frame conflict policy、buffer class values。 |
    | `accessibility_keyboard_profile` | 降低同时按键压力和恢复流程认知负担。 | Arrow keys = direction；Space = toggle guard；J = light；K = heavy；L = projectile；U = burst；P = pause。 | Enter = confirm；N = cancel；Arrow keys = UI navigation when UI owns context。 | Toggle guard、较长 UI/prompt 显示时间、明确状态提示；不扩大 combat buffer window。 | key bindings、profile id、toggle guard enabled、toggle state seed/reset rules、accessibility prompt timing knobs。 |
 
-   三套 profile 都必须通过 required combo smoke：direction + guard、direction + light、direction + heavy、direction + projectile、direction + burst、guard + light、guard + burst、pause/menu navigation。若 Standard profile 在目标浏览器/键盘组合上失败，MVP 必须提供实际可玩的 Alternate 或 Accessibility profile 通过同一 combo set；仅显示 warning 不算通过。
+   三套 profile 都必须通过 required combo smoke：direction + guard、direction + light、direction + heavy、direction + projectile、direction + burst、guard + light、guard + burst、pause/menu navigation。若 Standard profile 在目标浏览器/键盘组合上失败，MVP 必须提供实际可玩的 Alternate 或 Accessibility profile 通过同一 combo set；仅显示 warning 不算通过。Profile selection UI 必须提供 player-facing key-test flow：玩家可以用键盘逐项测试 movement、guard、attack、projectile、burst、pause、confirm、cancel 和 UI navigation，并在失败时切换到可用 profile 或进入 remap gate。
 
-   MVP 不包含自由 remapping capture modal。后续 remapping UI 属于下游系统；本 GDD 只要求 profile selection、冲突检测、hash 生成和 deterministic validation。任何 profile 变更都必须发生在 round start 前，increment `input_generation_id`，invalidate stale buffer/request，并禁止在 round 中静默改变。
+   Internal prototype evidence 可以只使用三套固定 profile。任何 public/player-facing MVP approval 必须额外提供 free keyboard remapping capture modal 或等价 keyboard remap flow，允许玩家重新绑定 combat、UI、confirm/cancel、pause 和 one-handed/serial-friendly layouts。Remap flow 是 Web keyboard accessibility implementation gate：它必须在 round start 前完成，写入 `input_config_hash`，通过 duplicate/reserved/conflict validation，increment `input_generation_id`，invalidate stale buffer/request，并禁止在 round 中静默改变。若 remap flow 未完成，本 GDD 只能批准 internal prototype 输入证据，不能批准 public keyboard accessibility。
 
 3. **默认键盘布局必须覆盖战斗与菜单语义**
 
@@ -66,13 +66,14 @@
 
    行为合同固定如下；具体 Godot API 由后续 ADR 选择：
 
-   - Router 必须在项目可控制的最早输入阶段记录 raw event。
+   - Router 必须在项目可控制的最早输入阶段记录 raw event；具体 Godot/Web hook 顺序由 Web Focus/Audio Unlock Shell ADR 与 Input Snapshot ADR 批准。
    - Godot `Input.is_action_pressed` / polling 不得用于反向补造过去 tick 的 `pressed`。
-   - Polling 只允许在 focus/fullscreen/page restore 后做 `key_state_reconciliation`，且只能清理或阻塞 held state，不能制造新的 `pressed`。
-   - `Control` 只能消费 router 发出的 semantic UI action / request，不得消费未记录的 physical key。
-   - Text entry、profile selection、browser/system-reserved shortcut 是 MVP 例外路径，但必须进入专门 `text_entry_or_profile_selection` context，并记录 request/decision。
-   - Future remapping capture 若后续加入，必须先写入独立 GDD/ADR 或本 GDD 修订；MVP 不允许用未定义 remap modal 作为阻塞验收入口。
+   - Polling 只允许在 focus/fullscreen/page restore 后做 capability-gated `key_state_reconciliation`，且只能清理或阻塞 held state，不能制造新的 `pressed`。
+   - `Control` 只能消费 router 发出的 semantic UI action / request，不得消费未记录的 physical key；UI 代码必须能被静态检查或 runtime assertion 证明不会从 `Control._input`、`_gui_input` 或 direct shortcut handler 生成 combat command / accepted request。
+   - Text entry、profile selection、public-MVP remapping、browser/system-reserved shortcut 是例外路径，但必须进入专门 `text_entry_or_profile_selection` / `profile_selection` / `remap_capture` context，并记录 request/decision；text-entry adapter 只能把已聚焦字段声明接受的 key 写入 text payload，不能生成 combat action。
+   - Public/player-facing MVP 的 remapping capture 必须由本 GDD 的 config/hash/validation 规则约束；若只做 internal prototype，remap context 不得出现在阻塞验收 AC 中。
    - SceneTree pause 或 Godot process mode 不得停止 router、focus recovery overlay、release cleanup 或 request logging。
+   - First focus、canvas keyboard ownership、audio unlock、fullscreen gate、prevent-default、reserved shortcut classification 和 key reconciliation capability 必须由 Web shell/JS bridge 或等价 ADR 证明；未完成该 ADR 时不得把 keyboard-only Web flow 标记为通过。
 
 5. **Web default suppression 必须按 context 决定**
 
@@ -85,10 +86,10 @@
    | Browser/system shortcut chord | Do not capture as gameplay; record `reserved_shortcut_blocked` if observed. |
    | Focus/page hidden/fullscreen transition | Do not accept gameplay input; enter focus recovery rules. |
 
-   QA 必须能验证 Arrow keys、Enter、P、N、Z/X/C/V/B、W/A/S/D、J/K/L/I/O、Space 在 gameplay、menu、overlay、profile selection 和 text-entry context 下不会滚动页面、双重提交、触发浏览器 UI 或泄漏成 combat command。Future remap context 不属于 MVP 阻塞验收。
+   QA 必须能验证 Arrow keys、Enter、P、N、Z/X/C/V/B、W/A/S/D、J/K/L/I/O、Space 在 gameplay、menu、overlay、profile selection、remap capture 和 text-entry context 下不会滚动页面、双重提交或泄漏成 combat command。Ctrl/Alt/Shift/Meta chord 与浏览器/system-reserved shortcut 不能要求“阻止浏览器 UI”作为通过条件；通过条件是 router 记录 `reserved_shortcut_blocked` / `reserved_shortcut_observed`、不生成 combat command、不重复提交 UI request，并在 Web shell ADR 中说明该浏览器是否允许 prevent-default。
 
 6. **InputSample 是 compact raw edge 的权威记录，不是无限诊断日志**
-   每个 gameplay-relevant physical edge 必须生成 compact `InputSample`。`InputSample` 至少包含：`input_schema_version`、`physical_event_sequence_index`、`captured_host_frame_index`、`event_order_in_host_frame`、`captured_monotonic_ms_quantized`、`device_source`、`player_slot_id`、`actor_slot_id_if_bound`、`physical_key_code`、`logical_key_label`、`mapped_action_if_any`、`active_input_context_id`、`event_edge = key_down/key_up/focus_signal/reconcile_signal`、`is_browser_repeat`、`modifier_ctrl`、`modifier_alt`、`modifier_shift`、`modifier_meta`、`is_reserved_shortcut_chord`、`browser_default_policy_decision`、`is_focus_safe_at_capture`、`input_config_hash`、`ui_context_stack_top_id_if_any`、`ui_focus_owner_stable_id_if_any`、`ui_focus_owner_generation_if_any`、`raw_event_diagnostic_flags`。
+   每个 gameplay-relevant physical edge 必须生成 compact `InputSample`。`InputSample` 至少包含：`input_schema_version`、`physical_event_sequence_index`、`captured_host_frame_index`、`event_order_in_host_frame`、`captured_monotonic_ms_quantized`、`device_source`、`player_slot_id`、`actor_slot_id_if_bound`、`round_instance_id`、`round_instance_sequence`、`input_generation_id`、`interruption_epoch`、`physical_key_code`、`logical_key_label`、`mapped_action_if_any`、`active_input_context_id`、`event_edge = key_down/key_up/focus_signal/reconcile_signal`、`is_browser_repeat`、`modifier_ctrl`、`modifier_alt`、`modifier_shift`、`modifier_meta`、`is_reserved_shortcut_chord`、`browser_default_policy_decision`、`is_focus_safe_at_capture`、`input_config_hash`、`ui_context_stack_top_id_if_any`、`ui_focus_owner_stable_id_if_any`、`ui_focus_owner_generation_if_any`、`raw_event_diagnostic_flags`。
 
    Action state 必须由 `InputSample` 和 router-owned physical-key state 推导，不能从 Godot 当前 action polling 反向补造过去 tick 的输入。额外浏览器 diagnostics、repeat bursts 和 high-volume events 只能进入 bounded diagnostic summary，不得扩大权威 payload 到无上限。
 
@@ -128,22 +129,22 @@
    - 当前 host frame 新到达的 physical events 只能封存到 catch-up batch 之后的第一个 future realtime target。
 
 10. **非推进状态使用 context snapshot，不伪造 committed tick**
-    countdown、player pause、focus_suspended、recovery_pause、automatic `presentation_ack_wait`、player recovery prompt、resume countdown 和 round_ended 中，如果 fixed runtime 没有正在提交 combat tick，snapshot 必须使用 `target_committed_tick_index = null`，并记录 `target_context_sequence_id`、`runtime_state_at_capture`、`tick_execution_state_at_capture = none`、`post_commit_runtime_state_at_capture = runtime_state_at_capture`、`state_reason` / `pause_reason`、`combat_input_policy_at_capture`。不得用 `current_committed_tick_index + 1` 伪造目标 tick。
+    countdown、player pause、focus_suspended、recovery_pause、automatic `presentation_ack_wait`、player recovery prompt、resume countdown 和 round_ended 中，如果 fixed runtime 没有正在提交 combat tick，snapshot 必须使用 `target_committed_tick_index_if_any = null`，并记录 `target_context_sequence_id_if_applicable`、`runtime_state_at_capture`、`tick_execution_state_at_capture = none`、`last_committed_post_commit_runtime_state_if_any`、`state_reason` / `pause_reason`、`combat_input_policy_at_capture`。不得用 `current_committed_tick_index + 1` 伪造目标 tick，也不得在 capture 时声明尚未 commit 的 `post_commit_runtime_state`。
 
 11. **InputSnapshot schema 必须包含 actor、context 和 trace ownership**
-    每个 `InputSnapshot` 至少包含：`input_schema_version`、`input_snapshot_id`、`round_instance_id`、`round_instance_sequence`、`player_slot_id`、`actor_runtime_id_if_bound`、`input_generation_id`、`interruption_epoch`、`input_config_hash`、`device_source`、`target_committed_tick_index`、`target_running_tick_index_if_applicable`、`target_context_sequence_id_if_applicable`、`captured_host_frame_index`、`input_seal_sequence_index`、`seal_cutoff_physical_event_sequence_index`、`runtime_state_at_capture`、`tick_execution_state_at_capture`、`post_commit_runtime_state_at_capture`、`state_reason`、`pause_reason`、`combat_input_policy_at_capture`、`top_ui_context_id_if_any`、`ui_context_generation_if_any`、canonical action order、每个 action 的 resolved `pressed` / `held` / `released` / `axis`、raw held bitset、combat-visible held bitset、pending-release bitset、generated `InputBufferEntry` ids、generated `InputDecisionRecord` ids、generated `InputRequestRecord` ids。
+    每个 `InputSnapshot` 至少包含：`input_schema_version`、`input_snapshot_id`、`round_instance_id`、`round_instance_sequence`、`player_slot_id`、`actor_runtime_id_if_bound`、`input_generation_id`、`interruption_epoch`、`input_config_hash`、`device_source`、`current_committed_tick_index_at_seal_start`、`target_committed_tick_index_if_any`、`target_running_tick_index_if_applicable`、`target_context_sequence_id_if_applicable`、`captured_host_frame_index`、`input_seal_sequence_index`、`seal_cutoff_physical_event_sequence_index`、`runtime_state_at_capture`、`tick_execution_state_at_capture`、`last_committed_post_commit_runtime_state_if_any`、`state_reason`、`pause_reason`、`combat_input_policy_at_capture`、`top_ui_context_id_if_any`、`ui_context_generation_if_any`、canonical action order、每个 action 的 resolved `pressed` / `held` / `released` / `axis`、raw held bitset、combat-visible held bitset、pending-release bitset、generated `InputBufferEntry` ids、generated `InputDecisionRecord` ids、generated `InputRequestRecord` ids。`target_committed_tick_index_if_any` 只在 fixed runtime 请求下一枚 committed tick 输入时存在；`target_running_tick_index_if_applicable` 只在该 target tick 的 `tick_execution_state = running` 时等于 fixed runtime 的下一枚 running-time index。Hitstop target 不递增 running index；非推进 context 只使用 `target_context_sequence_id_if_applicable`。
 
 12. **UI context stack 必须使用稳定数据，不使用 live Control 当权威**
-    每个 UI context 至少有：`ui_context_id`、`ui_context_type`、`ui_context_generation`、`priority_layer`、`modal_flag`、`parent_context_id_if_any`、`focus_owner_stable_id_if_any`、`focus_owner_generation_if_any`、`opened_at_context_sequence_id`、`closed_at_context_sequence_id_if_any`、`accepts_actions`、`pass_through_actions`、`captures_actions`、`combat_input_policy_override`。Top context 由 `(priority_layer desc, modal_flag desc, opened_at_context_sequence_id desc, ui_context_id asc)` 确定。
+    每个 UI context 至少有：`ui_context_id`、`ui_context_type`、`ui_context_generation`、`priority_layer`、`modal_flag`、`modal_blocking_rank`、`parent_context_id_if_any`、`focus_owner_stable_id_if_any`、`focus_owner_generation_if_any`、`opened_at_context_sequence_id`、`closed_at_context_sequence_id_if_any`、`accepts_actions`、`pass_through_actions`、`captures_actions`、`combat_input_policy_override`。Top context 先由 modal ownership 决定：若存在 open modal context，则最高 `modal_blocking_rank` 的 modal 永远高于所有 non-modal；同一 modal rank 内才比较 `(priority_layer desc, opened_at_context_sequence_id desc, ui_context_id asc)`。若没有 modal，non-modal top context 才按 `(priority_layer desc, opened_at_context_sequence_id desc, ui_context_id asc)` 排序。
 
-    MVP routing 默认 **不 fallthrough**：topmost modal context 阻止所有 lower context；topmost non-modal context 只有在 action 明确列入 `pass_through_actions` 时才允许 lower context 处理。HUD/toast/prompt 若不可交互，不得注册为 capturing top context。Parent context 关闭时，其 child contexts 必须同一 `context_sequence_id` 内关闭，并记录 close reason；同帧 physical event 与 context open/close 的排序使用 `context_sequence_id` 升序和 `physical_event_sequence_index` 升序，不依赖 scene tree order。
+    MVP routing 默认 **不 fallthrough**：topmost modal context 阻止所有 lower context；topmost non-modal context 只有在 action 明确列入 `pass_through_actions` 时才允许 lower context 处理。`combat_input_policy_override` 只能进一步收紧 fixed runtime 提供的 `combat_input_policy_at_capture`，不能把 `blocked_all`、`menu_only`、`resume_confirm_only` 或 `capture_only` 升级为 `combat_execute_allowed`。HUD/toast/prompt 若不可交互，不得注册为 capturing top context。Parent context 关闭时，其 child contexts 必须同一 `context_sequence_id` 内关闭，并记录 close reason；同帧 physical event 与 context open/close 的排序使用 `context_sequence_id` 升序和 `physical_event_sequence_index` 升序，不依赖 scene tree order。
 
     Stable focus owner 必须来自 UI control registry，而不是 live Node reference。每个 registered control 至少有：`control_stable_id`、`control_role`、`control_generation`、`owning_ui_context_id`、`visible`、`enabled`、`focusable`、`accepts_actions`、`semantic_command_if_confirmed`。Control 被销毁、隐藏、禁用、generation mismatch 或离开 owning context 时，请求必须在 request dispatch 前 fail closed 为 `stale_ui_context_or_focus_owner`，不得落到下层 menu 或 combat。
 
-    UI context/control record stream 必须可重放。每个 `UIContextRecord` 至少包含：`ui_context_record_id`、`event_type = opened/closed/focus_changed/control_registered/control_unregistered/context_updated`、`ui_context_id`、`ui_context_generation`、`context_sequence_id`、`priority_layer`、`modal_flag`、`parent_context_id_if_any`、`focus_owner_stable_id_if_any`、`focus_owner_generation_if_any`、`control_stable_id_if_any`、`control_generation_if_any`、`reason`、`resulting_top_context_id_if_any`。这些 records 参与 canonical hash，并且必须先于引用它们的 `InputRequestRecord` 出现在同一 trace stream 中。
+    UI context/control record stream 必须可重放。每个 `UIContextRecord` 至少包含：`ui_context_record_id`、`event_type = opened/closed/focus_changed/control_registered/control_unregistered/context_updated/control_state_changed/ui_repeat_generated`、`ui_context_id`、`ui_context_generation`、`context_sequence_id`、`priority_layer`、`modal_flag`、`modal_blocking_rank`、`parent_context_id_if_any`、`focus_owner_stable_id_if_any`、`focus_owner_generation_if_any`、`control_stable_id_if_any`、`control_generation_if_any`、`control_role_if_any`、`control_visible_if_any`、`control_enabled_if_any`、`control_focusable_if_any`、`control_accepts_actions_if_any`、`semantic_command_if_confirmed_if_any`、`ui_repeat_source_action_if_any`、`ui_repeat_index_if_any`、`reason`、`resulting_top_context_id_if_any`。这些 records 参与 canonical hash，并且必须先于引用它们的 `InputRequestRecord` 出现在同一 trace stream 中。全局 record 排序键为 `(round_instance_sequence, context_sequence_id, physical_event_sequence_index_or_null, ui_context_record_id)`；不得依赖 Control tree 顺序。
 
 13. **InputRequestRecord schema 必须可重放和可验收**
-    每个 runtime/UI request 至少包含：`input_request_record_id`、`request_type = pause/confirm/cancel/ui_navigation/quick_restart/exit_to_menu/profile_select/no_op`、`source_action`、`source_snapshot_id`、`physical_event_sequence_index`、`request_boundary_sequence_id`、`player_slot_id`、`top_ui_context_id_if_any`、`top_ui_context_type_if_any`、`ui_context_generation_if_any`、`focus_owner_stable_id_if_any`、`focus_owner_generation_if_any`、`input_generation_id`、`interruption_epoch`、`idempotency_key`、`acceptance_result = accepted/rejected/no_op/consumed`、`consumed_by_context_id_if_any`、`consumed_by_control_stable_id_if_any`、`semantic_command_if_any`、`reject_or_noop_reason_if_any`、`clears_combat_input = true/false`。
+    每个 runtime/UI request 至少包含：`input_request_record_id`、`request_type = pause/confirm/cancel/ui_navigation/quick_restart/exit_to_menu/profile_select/remap_capture/no_op`、`source_action`、`source_snapshot_id`、`physical_event_sequence_index`、`request_boundary_sequence_id`、`request_order_key = (round_instance_sequence, source_snapshot_id, request_boundary_sequence_id, request_type_ordinal, source_action_ordinal, top_ui_context_id_if_any, consumed_by_control_stable_id_if_any, input_request_record_id)`、`player_slot_id`、`top_ui_context_id_if_any`、`top_ui_context_type_if_any`、`ui_context_generation_if_any`、`focus_owner_stable_id_if_any`、`focus_owner_generation_if_any`、`input_generation_id`、`interruption_epoch`、`idempotency_key`、`ui_repeat_index_if_any`、`ui_repeat_due_time_us_if_any`、`acceptance_result = accepted/rejected/no_op/consumed`、`consumed_by_context_id_if_any`、`consumed_by_control_stable_id_if_any`、`semantic_command_if_any`、`reject_or_noop_reason_if_any`、`clears_combat_input = true/false`。同一 snapshot 多个 request 必须按 `request_order_key` 严格排序；UI held-repeat 不读取 browser repeat，而是由 router 根据 `ui_repeat_initial_delay_ms` / `ui_repeat_interval_ms` 生成 deterministic `ui_repeat_generated` context record 和对应 `InputRequestRecord`。
 
     Request result 语义固定如下：`accepted` 表示 runtime state 或 persistent UI state 被该 request 改变；`consumed` 表示 focused UI control 使用该 action 但不一定改变 runtime state；`no_op` 表示 action 在当前 state 合法但没有效果，例如 already paused 的 pause；`rejected` 表示 action 不被当前 context 接受。Quick restart / exit 使用二阶段记录：confirm 先被 focused control `consumed`，随后同一 boundary 生成 `quick_restart` 或 `exit_to_menu` semantic request 并 `accepted`。危险 semantic request 的 `idempotency_key` 必须包含 focused control id、control generation、source snapshot id 和 physical event sequence；browser repeat 或 held confirm 不得重复触发。
 
@@ -152,8 +153,12 @@
 
     `buffer_attempt_id` 永远不复用；duplicate press 不是刷新旧 attempt，而是创建新 attempt，并按 lifecycle 规则 supersede 旧 attempt。
 
+    被选中的 entry 只提交 candidate combat command，不直接改变战斗状态。Candidate command handoff 至少包含：`candidate_command_id`、`round_instance_id`、`round_instance_sequence`、`command_source = player`、`command_source_ordinal = 0`、`source_actor_id`、`player_slot_id`、`target_committed_tick_index`、`target_running_tick_index_if_applicable`、`source_snapshot_id`、`source_buffer_entry_id`、`command_intent_id`、`command_type = movement/guard/light_attack/heavy_attack/projectile/burst`、`command_type_ordinal`、`pressed_or_held`、`input_generation_id`、`interruption_epoch`、`input_config_hash`、`runtime_state_at_capture`、`combat_input_policy_at_capture`、`guard_suppressed_by_attack_attempt`、`ordinary_guard_intent_suppressed`、`submission_order_key`、`runtime_command_sequence_key_preview`、`idempotency_key`。Fixed runtime / combat state machine 是唯一 accepted/rejected command authority；input buffering 只记录 submission 和 downstream result。
+
 15. **InputDecisionRecord 必须覆盖 buffer 和 no-buffer 结果**
-    每个 consumed、rejected、expired、superseded、invalidated、capacity-evicted 的 buffer entry 必须记录 lifecycle。每个没有创建 buffer entry 的关键输入也必须记录 `InputDecisionRecord`：key repeat ignored/merged、countdown action blocked、opposite-axis neutralized、runtime request rejected、pending-release blocked、same-snapshot request clearing combat input、stale snapshot rejected、focus unsafe blocked、round ended blocked、transient press/release folded、future_remap_capture_blocked、ghosting fallback required、trace overflow summary。
+    每个 consumed、rejected、expired、superseded、invalidated、capacity-evicted 的 buffer entry 必须记录 lifecycle。每个没有创建 buffer entry 的关键输入也必须记录 `InputDecisionRecord`：key repeat ignored/merged、countdown action blocked、opposite-axis neutralized、runtime request rejected、pending-release blocked、same-snapshot request clearing combat input、stale snapshot rejected、focus unsafe blocked、round ended blocked、transient press/release folded、remap_capture_blocked_or_completed、ghosting fallback required、trace overflow summary。
+
+    每个 `InputDecisionRecord` 至少包含：`input_decision_record_id`、`decision_order_key`、`source_snapshot_id_if_any`、`source_request_record_id_if_any`、`source_buffer_entry_id_if_any`、`source_physical_event_sequence_index_if_any`、`player_slot_id`、`actor_runtime_id_if_any`、`input_generation_id`、`interruption_epoch`、`decision_category`、`decision_reason_code`、`decision_reason_catalog_version`、`lifecycle_state_before_if_any`、`lifecycle_state_after_if_any`、`selected_candidate_command_id_if_any`、`guard_suppression_flag_if_any`、`player_feedback_category`、`localization_key_if_any`、`is_authoritative_input_loss`。`decision_reason_code` 的 source of truth 是本 GDD / registry 同步后的 reason catalog；实现不得临时发明未登记 reason。
 
 16. **pressed / held / released 语义必须稳定且按动作类型解释**
     `pressed` 只在从 physical up 到 down 的第一个 sealed snapshot 为 true；持续按住只产生 `held`；松开产生 `released`。浏览器 repeat keydown 不得制造多个 `pressed`。攻击、气弹和爆气只由 `pressed` 创建 one-shot buffer entry；持续 `held` 不会自动创建重复攻击、重复气弹或重复爆气。
@@ -168,16 +173,16 @@
     - One-shot command layer：`burst`、`light_attack`、`heavy_attack`、`projectile` 只在 `pressed` 时创建 candidate buffer entry。
     - Runtime/UI request layer：`pause`、`confirm`、`cancel`、`ui_*` 使用 request/context routing，不参与 combat priority。
 
-    方向 held 不得因为同 tick one-shot action 而消失；one-shot action 也不得被 movement held 自动压掉。Guard held 与 one-shot attack 同 tick 时不得形成 option select：若 `light_attack`、`heavy_attack` 或 `projectile` candidate 被选中，输入系统必须在 candidate command 上标记 `guard_suppressed_by_attack_attempt = true`，并向下游提交 `ordinary_guard_intent_suppressed` decision。下游 combat state machine / guard GDD 必须保证同一 vulnerability window 内玩家不能同时获得普通防御和攻击尝试的最优结果；除非未来系统显式设计 guard-cancel、reversal 或 burst 例外，否则攻击尝试视为放弃普通 held guard。
+    方向 held 不得因为同 tick one-shot action 而消失；one-shot action 也不得被 movement held 自动压掉。Guard held 与 one-shot attack / burst 同 tick 时不得形成 option select：若 `light_attack`、`heavy_attack`、`projectile` 或 `burst` candidate 被选中，输入系统必须在 candidate command 上标记 `guard_suppressed_by_attack_attempt = true`，并向下游提交 `ordinary_guard_intent_suppressed` decision。下游 combat state machine / guard GDD 必须保证同一 vulnerability window 内玩家不能同时获得普通防御和攻击/爆气尝试的最优结果；除非未来系统显式设计 guard-cancel 或 reversal 例外，否则攻击/爆气尝试视为放弃普通 held guard。
 
-18. **same-snapshot 高价值命令严格；跨 tick 使用最新意图优先**
+18. **same-snapshot Burst 优先且无 fallback；跨 tick 使用最新意图优先**
     只有 one-shot combat command 进入同一 `exclusive_combat_command_group`。MVP 同 snapshot 规则分两层：
 
-    - `burst` 是 high-value emergency command，必须是该 actor、该 snapshot、该 group 内唯一 one-shot 才能创建 valid pending entry。
-    - 若 `burst` 与 `light_attack`、`heavy_attack` 或 `projectile` 在同一 snapshot 同组出现，全部同组 one-shot entries 立即标记 `ambiguous_high_value_conflict`，不提交、不 fallback、不消耗气槽；玩家必须 fresh press 表达明确意图。
-    - 若同 snapshot 只有 non-burst one-shot 冲突，MVP 使用固定优先级 `light_attack > heavy_attack > projectile`；较低优先级 entry 标记 `superseded_by_higher_priority_same_snapshot`。
+    - `burst` 是 high-value emergency command；若同一 actor、同一 snapshot、同一 group 内同时出现 `burst` 和 `light_attack` / `heavy_attack` / `projectile`，只创建/保留 burst candidate，所有 non-burst one-shot entries 标记 `superseded_by_burst_same_snapshot`。
+    - Burst candidate 若被下游判定资源不足、状态禁止或其他 terminal reject，不能 fallback 到同 snapshot attack/projectile，也不能恢复普通 guard；玩家必须 fresh press 表达新意图。Burst attempt 不论最终 accepted 或 terminal reject，都按 Rule 17 suppress ordinary guard for that vulnerability window。
+    - 若同 snapshot 没有 burst，只有 non-burst one-shot 冲突，MVP 使用固定优先级 `light_attack > heavy_attack > projectile`；较低优先级 entry 标记 `superseded_by_higher_priority_same_snapshot`。
 
-    跨 snapshot / 跨 running tick 评估 pending entries 时，选择键为：
+    跨 snapshot / 跨 running tick 评估 pending entries 时，候选集合必须先过滤：same round、same actor、same `input_generation_id`、same `interruption_epoch`、same `input_config_hash`、not stale、not expired、not invalidated、not superseded、not future/corrupt age、target tick/context 可被当前 runtime 查询。只有过滤后的 valid pending entries 可以进入选择键：
 
     `(created_at_running_tick_index_desc, created_from_snapshot_id_desc, priority_value_desc, input_buffer_entry_id_desc)`
 
@@ -207,7 +212,7 @@
 21. **缓冲时间按 running ticks 计算，但 hitstop 还必须有 real-time cap**
     one-shot buffer entry 使用 running tick age。running tick age 只在 `tick_execution_state = running` 的 committed tick 后推进；hitstop tick、pause、focus_suspended、countdown、recovery_pause、automatic `presentation_ack_wait`、player recovery prompt 和 round_ended 不推进 running age。
 
-    hitstop 中新创建的 one-shot buffer entry 使用 `created_at_running_tick_index = first_legal_running_tick_index_after_hitstop`，因此第一枚恢复 running tick 上 `buffer_age_running_ticks = 0`。同时必须检查 `hitstop_entry_realtime_age_ms = first_legal_running_tick_monotonic_ms_quantized - created_at_monotonic_ms_quantized`；超过 `hitstop_buffer_realtime_cap_ms` 的 entry 过期为 `expired_by_hitstop_realtime_cap`，避免超长 hitstop 把很久以前的输入变成“刚按”。
+    hitstop 中新创建的 one-shot buffer entry 使用 `created_at_running_tick_index = first_legal_running_tick_index_after_hitstop`，因此第一枚恢复 running tick 上 `buffer_age_running_ticks = 0`。同时必须检查 realtime lifetime：从 physical press 到每次 evaluation 的 elapsed time 都必须 `<= hitstop_buffer_realtime_cap_ms`。超过 cap 的 entry 过期为 `expired_by_hitstop_realtime_cap`，即使 running-age 仍有效也不能继续 retain；这避免 hitstop realtime cap 与 post-hitstop running buffer 叠加成过度宽松的自动输入。
 
 22. **hitstop 保留战斗意图，但不执行战斗命令**
     Hitstop tick 可以采集 direction、guard 和 one-shot input，并把合法 one-shot buffer entry 排到第一个后续 running tick 检查。Hitstop 中不得执行 movement、attack、projectile 或 burst command。Hitstop 中完整 press→release 的 one-shot tap 仍可创建 buffer entry，并在 first legal running tick 评估；release 不取消该 pressed entry，除非后续系统明确设计 charge / hold-cancel 机制。
@@ -240,7 +245,7 @@
     - UI 必须显示可读提示，例如 localization key `input.release_keys_to_resume`，并且提示不能只靠颜色表达。
 
 26. **round-start countdown 允许方向和防御预读，不允许 one-shot 预存**
-    `countdown_direction_pre_read_enabled = true` 时，倒计时期间允许 `left/right/up/down` 记录为 `countdown_direction_pre_read`，用于 `go` 后第一枚 running tick 的朝向或移动准备。Guard 在 round-start countdown 中允许作为 continuous guard pre-read：若玩家在 `go` 时仍物理 held 且不处于 pending-release，则第一枚 running tick 可输出 guard held intent；它不产生 `pressed` edge，不创建 one-shot，不触发攻击，不消耗资源。
+    Fixed runtime 的 countdown policy 名称保持为 `direction_pre_read_only`；本 GDD 不新增 `combat_input_policy` enum。`countdown_direction_pre_read_enabled = true` 时，倒计时期间允许 `left/right/up/down` 记录为 `countdown_direction_pre_read`，用于 `go` 后第一枚 running tick 的朝向或移动准备。Guard pre-read 是 input-owned continuous-intent exception：只有 `countdown_guard_pre_read_enabled = true`、round-start countdown、同 generation/epoch、非 pending-release 且 `go` 时仍物理 held 时，第一枚 running tick 才可输出 guard held intent；它不产生 `pressed` edge，不创建 one-shot，不触发攻击，不消耗资源。
 
     `light_attack`、`heavy_attack`、`projectile`、`burst` 不得在 countdown 中预存成开局攻击或开局爆气；若玩家一直 held 到 `go` 后，仍不产生 one-shot `pressed`，必须 release 后重新 press。玩家可见提示应说明“移动/防御可提前按；攻击/爆气从 GO 后重新按”。
 
@@ -253,7 +258,7 @@
     |---|---|---|---|---|---|
     | `running`, no modal UI | accepted as player pause request at request boundary | rejected unless prompt owns it | rejected unless prompt owns it | rejected unless prompt owns it | `combat_execute_allowed` |
     | `hitstop` | accepted after current hitstop-safe boundary | rejected unless prompt owns it | rejected unless prompt owns it | rejected unless prompt owns it | `capture_only` |
-    | round-start countdown | accepted as player pause request | rejected unless prompt owns it | rejected unless prompt owns it | rejected unless prompt owns it | `direction_guard_pre_read_only` |
+    | round-start countdown | accepted as player pause request | rejected unless prompt owns it | rejected unless prompt owns it | rejected unless prompt owns it | `direction_pre_read_only` |
     | player pause menu focused | no-op if already paused | consumed by focused menu control | consumed by focused menu/back control | consumed by menu navigation | `menu_only` |
     | focus recovery overlay focused | rejected/no-op unless overlay owns pause | consumed by overlay to begin resume flow | consumed only if UX allows staying paused/menu | consumed by overlay if it has selectable controls | `resume_confirm_only` |
     | `recovery_pause` player prompt | rejected unless UI allows menu open | consumed by prompt / resume flow | consumed only if UX allows abort/menu | consumed by prompt if selectable | `resume_confirm_only` |
@@ -277,13 +282,13 @@
     Debug/tuning overlay 若在 dev build 中存在，必须注册为 UI context，使用 request routing，不能直接读 physical keys 改 combat state。Exported MVP build 默认不显示 dev overlay。Debug hotkey 若存在，必须在 config 中声明、写入 hash、记录 request，并且不能绕过 pause/focus/pending-release cleanup。
 
 33. **玩家可见反馈必须把内部 reason 转成可理解结果**
-    输入系统必须提供 player-visible feedback matrix。每个内部 reason 至少映射到：`silent`、`training_history_only`、`light_hud_hint`、`blocking_overlay_prompt`、`menu_message` 之一，并记录 localization key、触发条件、最小显示时间、重复冷却、优先级、是否可被覆盖、是否允许在 combat 中显示。MVP 最小映射：`ambiguous_high_value_conflict` → light HUD / training history；`countdown_action_blocked` → light HUD；`pending_release` → blocking overlay；`reconciled_up_blocked_press` → blocking overlay with “再按一次”说明；`burst_unavailable` → light HUD / training history；`superseded_by_newer_attempt` → training history；`stale_ui_context_or_focus_owner` → silent + diagnostics；`menu_owns_input` → first-time menu hint only。玩家-facing 文案不得显示内部 enum。
+    输入系统必须提供 player-visible feedback matrix。每个内部 reason 至少映射到：`silent`、`training_history_only`、`light_hud_hint`、`blocking_overlay_prompt`、`menu_message` 之一，并记录 localization key、触发条件、最小显示时间、重复冷却、优先级、是否可被覆盖、是否允许在 combat 中显示。MVP 最小映射：`superseded_by_burst_same_snapshot` / `burst_priority_no_fallback` → light HUD / training history；`countdown_action_blocked` → light HUD；`pending_release` → blocking overlay；`reconciled_up_blocked_press` → blocking overlay with “再按一次”说明；`burst_unavailable` → light HUD / training history；`superseded_by_newer_attempt` → training history；`stale_ui_context_or_focus_owner` → blocking focus-repair prompt if keyboard path is blocked, otherwise silent + diagnostics；`menu_owns_input` → first-time menu hint only。玩家-facing 文案不得显示内部 enum。
 
 34. **Prompt 和视觉无障碍必须有客观验收标准**
     所有 recovery、countdown、profile、toggle guard、ghosting fallback 和 dangerous request 提示必须可本地化、非颜色唯一、支持 200% UI scale，在 1280×720 Web canvas 内不被 HUD 裁切。文本对比目标至少 4.5:1，非文本 focus indicator / icon 对比至少 3:1；MVP 字号不得低于 18px 等效高度；图标必须配文字；状态不能只靠闪烁或颜色表达。Accessibility profile 可使用 `accessibility_prompt_min_visible_ms` 和 `accessibility_prompt_repeat_cooldown_ms` 增强可读性，但不得扩大 combat buffer window。
 
 35. **Keyboard-only Web flow 是 MVP 阻塞体验**
-    从页面加载开始，玩家必须能不使用鼠标完成：获得 game/canvas keyboard focus、选择 Standard/Alternate/Accessibility profile、开始回合、暂停、恢复、查看 release-keys 提示、完成 quick restart 或 exit menu。若浏览器要求 click/tap 才能 audio unlock 或 fullscreen，UI 必须提供 keyboard-reachable fallback state 和明确提示；不得把“需要鼠标点击画面”作为键盘 MVP 的隐藏前提。
+    从页面加载开始，玩家必须能不使用鼠标完成：获得 game/canvas keyboard focus、选择 Standard/Alternate/Accessibility profile、运行 public-MVP remap/key-test flow、开始回合、暂停、恢复、查看 release-keys 提示、完成 quick restart 或 exit menu。Tab / Shift+Tab / Escape 或项目批准的等价键盘 escape path 必须能离开不可用/过期 focus owner，不得形成 keyboard trap。若浏览器要求 click/tap 才能 audio unlock 或 fullscreen，UI 必须提供 keyboard-reachable fallback state 和明确提示；不得把“需要鼠标点击画面”作为键盘 MVP 的隐藏前提。该行为必须由 Web shell/JS bridge 或等价 ADR 验证。
 
 ## Formulas
 
@@ -344,21 +349,21 @@
 
 4. **hitstop realtime cap**
 
-   `hitstop_entry_realtime_age_ms = first_legal_running_tick_monotonic_ms_quantized - created_at_monotonic_ms_quantized`
+   `hitstop_entry_realtime_age_ms = floor((evaluation_monotonic_us - created_at_monotonic_us) / 1000)`
 
    `is_hitstop_entry_realtime_valid = 0 <= hitstop_entry_realtime_age_ms <= hitstop_buffer_realtime_cap_ms`
 
    | Variable | Definition | Default | Safe Range |
    |---|---|---:|---:|
-   | `hitstop_buffer_realtime_cap_ms` | one-shot entry 在 hitstop 中允许保留的最大真实时间。 | 150ms | 66-200ms |
-   | `created_at_monotonic_ms_quantized` | InputSample 创建时的整数毫秒时间，由 fixture 或 runtime 提供。 | required | integer `>= 0` |
-   | `first_legal_running_tick_monotonic_ms_quantized` | 第一个可评估 running tick 对应的整数毫秒。 | required | integer `>= created` |
+   | `hitstop_buffer_realtime_cap_ms` | hitstop-created one-shot entry 从 physical press 到每次 evaluation 允许保留的最大真实时间。 | 120ms | 66-150ms |
+   | `created_at_monotonic_us` | InputSample 创建时的整数微秒 profiling/capture time；不参与 canonical deterministic hash。 | required | integer `>= 0` |
+   | `evaluation_monotonic_us` | 本次评估 entry 的整数微秒 profiling/capture time。 | required | integer `>= created` |
 
    Examples：
 
-   - `first_legal = 1050ms`、`created = 960ms`、cap `150ms`：age `90ms`，valid。
-   - `first_legal = 1200ms`、`created = 960ms`、cap `150ms`：age `240ms`，`expired_by_hitstop_realtime_cap`。
-   - `first_legal < created`：reject `future_or_corrupt_hitstop_time`。
+   - `evaluation = 1,050,000us`、`created = 960,000us`、cap `120ms`：age `90ms`，valid。
+   - `evaluation = 1,200,000us`、`created = 960,000us`、cap `120ms`：age `240ms`，`expired_by_hitstop_realtime_cap`。
+   - `evaluation < created`：reject `future_or_corrupt_hitstop_time`。
 
 5. **runtime request 不进入 combat buffer**
 
@@ -368,22 +373,26 @@
 
 6. **同 snapshot one-shot conflict value**
 
-   `has_ambiguous_high_value_conflict = burst_pressed && non_burst_one_shot_count > 0`
+   `has_burst_priority_conflict = burst_pressed && non_burst_one_shot_count > 0`
 
-   `selected_same_snapshot_non_burst_action = max_by(input_priority_value(action), action_ordinal_tiebreaker)` only when `has_ambiguous_high_value_conflict = false` and no burst is present.
+   `selected_same_snapshot_action = burst, if burst_pressed = true`
+
+   `selected_same_snapshot_action = max_by(input_priority_value(action), action_ordinal_tiebreaker), if burst_pressed = false and non_burst_one_shot_count > 0`
 
    | One-shot Action | Priority | Ordinal tiebreaker | Same-snapshot rule |
    |---|---:|---:|---|
-   | `burst` | 400 | 10 | Valid only if it is the only one-shot in the exclusive group. |
+   | `burst` | 400 | 10 | Wins same-snapshot one-shot conflict; no attack/projectile fallback if Burst terminally rejects. |
    | `light_attack` | 300 | 20 | Can beat heavy/projectile only when burst is absent. |
    | `heavy_attack` | 200 | 30 | Can beat projectile only when burst is absent. |
    | `projectile` | 100 | 40 | Lowest non-burst priority. |
 
-   Equal priority values are invalid configuration and must fail before combat starts. Direction and guard are not in this one-shot priority table. If `has_ambiguous_high_value_conflict = true`, every same-group one-shot entry is rejected as `ambiguous_high_value_conflict`; no priority selection or fallback occurs.
+   Equal priority values are invalid configuration and must fail before combat starts. Direction and guard are not in this one-shot priority table. If `has_burst_priority_conflict = true`, non-burst same-group entries are `superseded_by_burst_same_snapshot`; Burst candidate is submitted or terminally rejected by downstream authority, but never falls back to attack/projectile.
 
 7. **跨 tick one-shot arbitration**
 
-   `selected_pending_entry = max_by(created_at_running_tick_index, created_from_snapshot_id, priority_value, input_buffer_entry_id)`
+   `eligible_pending_entries = filter(pending_entries, same_round && same_actor && same_generation && same_epoch && same_config && not_stale && not_expired && not_invalidated && not_superseded && not_future_or_corrupt && runtime_query_available)`
+
+   `selected_pending_entry = max_by(eligible_pending_entries, created_at_running_tick_index, created_from_snapshot_id, priority_value, input_buffer_entry_id)`
 
    | Variable | Definition | Valid Range |
    |---|---|---|
@@ -427,24 +436,27 @@
    | Variable | Definition | Default | Safe Range |
    |---|---|---:|---:|
    | `max_input_diagnostics_per_tick` | 单 tick diagnostic record 上限。 | 32 | 16-64 |
-   | `max_input_trace_memory_bytes` | input trace window 总 byte 上限。 | 1,048,576 | 262,144-2,097,152 |
+   | `max_input_trace_memory_bytes` | input trace window 总 byte 上限；必须是 fixed runtime 全局 trace memory 的子预算。 | 262,144 | 131,072-524,288 |
    | `projected_trace_window_bytes` | 本次写入后 trace window 预计 bytes。 | measured | integer `>= 0` |
 
 11. **performance percentile calculation**
 
-   `input_processing_elapsed_ms = seal_end_monotonic_ms_quantized - seal_start_monotonic_ms_quantized`
+   `input_processing_elapsed_us = seal_end_profiler_us - seal_start_profiler_us`
 
-   `p95 = percentile(input_processing_elapsed_ms_samples, 95)`
+   `input_processing_elapsed_ms = input_processing_elapsed_us / 1000.0`
 
-   `p99 = percentile(input_processing_elapsed_ms_samples, 99)`
+   `p95 = nearest_rank_percentile(sort(input_processing_elapsed_ms_samples), 95)`
+
+   `p99 = nearest_rank_percentile(sort(input_processing_elapsed_ms_samples), 99)`
 
    | Variable | Definition | Default / Requirement |
    |---|---|---|
-   | `input_processing_elapsed_ms_samples` | exported Web minimal trace mode 下每次 input seal 的耗时样本，包含 capture drain、snapshot build、request route、buffer processing。 | At least 3 runs × 60s each after 5s warmup |
+   | `seal_start_profiler_us` / `seal_end_profiler_us` | 非权威 profiling timer 整数微秒；不进入 canonical input hash，不影响 determinism。 | Web shell / Profiling ADR must define source and fallback |
+   | `input_processing_elapsed_ms_samples` | exported Web minimal trace mode 下每次 input seal 的耗时样本，包含 capture drain、snapshot build、request route、buffer processing。 | At least 3 runs × 60s each after 5s warmup; each run must include normal play, UI menu routing, hitstop, focus recovery and catch-up/recovery scenarios |
    | `input_processing_budget_ms_p95` | p95 预算。 | `<= 0.20ms` |
    | `input_processing_budget_ms_p99` | p99 预算。 | `<= 0.50ms` |
 
-   Performance measurement 不得在 `dev_verbose` trace mode 下进行；否则结果 invalid。
+   `nearest_rank_percentile` 使用 1-based rank `ceil(percentile / 100 * sample_count)`，rank clamp 到 `[1, sample_count]`；`sample_count = 0` 直接 fail。Performance measurement 不得使用 deterministic `captured_monotonic_ms_quantized` 或 `dev_verbose` trace mode；否则结果 invalid。若 Web/runtime 不能提供 microsecond or better profiler，Profiling ADR 必须提供可验证替代源，否则 AC fail。
 
 12. **input-owned heap growth**
 
@@ -459,6 +471,8 @@
    若浏览器 JS heap API 不可用，MVP 至少必须记录 input-owned data structure tracked bytes；如果两者都不可测，该 AC fail，不能以“浏览器不支持”跳过。
 
 13. **UI prompt timing does not change combat timing**
+
+   `profile_prompt_min_visible_ms = accessibility_prompt_min_visible_ms, if active_profile = accessibility_keyboard_profile; otherwise base_prompt_min_visible_ms`
 
    `effective_prompt_min_visible_ms = max(base_prompt_min_visible_ms, profile_prompt_min_visible_ms)`
 
@@ -490,7 +504,7 @@
    held guard 属于 continuous guard intent，pressed attack 属于 one-shot command。若 `light_attack`、`heavy_attack` 或 `projectile` candidate 被选中，输入系统仍保留 raw held guard record，但 combat-visible ordinary guard intent 标记为 `ordinary_guard_intent_suppressed`，candidate command 标记 `guard_suppressed_by_attack_attempt = true`。状态机最终决定 attack 是否允许或 terminal reject，但不得在同一 vulnerability window 让玩家同时获得普通防御和攻击尝试的最优结果。
 
 5. **burst + attack 同 snapshot**
-   Burst 是 high-value emergency command，必须没有竞争 one-shot 才能进入 pending。若 `burst` 与 light/heavy/projectile 同 snapshot 同组出现，全部同组 one-shot entries 标记 `ambiguous_high_value_conflict`，不提交、不 fallback、不消耗气槽。训练/HUD 可以显示 localization key `input.ambiguous_burst_conflict`，提示玩家重新明确按下。
+   Burst 是 high-value emergency command。若 `burst` 与 light/heavy/projectile 同 snapshot 同组出现，Burst candidate 赢得同 snapshot 冲突，non-burst entries 标记 `superseded_by_burst_same_snapshot`。若 Burst 后续 terminal reject（例如资源不足），不 fallback 到 attack/projectile，也不恢复普通 guard；训练/HUD 可以显示 localization key `input.burst_priority_no_fallback`，提示“本次按键被判定为爆气，未转成攻击”。
 
 6. **较旧 burst 与较新 light attack 跨 tick 竞争**
    若 burst 在 running tick 100 buffered，light attack 在 running tick 102 buffered，二者在 tick 103 都有效，light attack 因较新 intent 被选中。若 light terminal reject，不 fallback 到旧 burst，旧 burst 清理为 `superseded_by_newer_attempt`。
@@ -508,7 +522,7 @@
     如果 guard 是 unsafe boundary 前的旧 held，resume countdown 中仍是 pending release，不会自动成为 guard。只有 post-restore reconciliation 或 trusted keyup 清理后，当前 physical down 才可作为 continuous guard intent。
 
 11. **hitstop 中多次输入**
-    Hitstop 中可以采集 direction、guard 和 one-shot pressed input，不执行 combat command，不推进 buffer age。Hitstop 中创建的 one-shot entry 在 first legal running tick 的 running age 为 0，但仍受 hitstop realtime cap 限制。若多个 one-shot 在同一 target running tick 竞争，先按跨 tick newest-intent，再按同 snapshot priority；continuous guard/direction 单独保留。
+    Hitstop 中可以采集 direction、guard 和 one-shot pressed input，不执行 combat command，不推进 buffer age。Hitstop 中创建的 one-shot entry 在 first legal running tick 的 running age 为 0，但每次 evaluation 仍受 hitstop realtime lifetime cap 限制，不能靠 post-hitstop running buffer 继续延长过旧输入。若多个 one-shot 在同一 target running tick 竞争，先过滤 eligible entries，再按跨 tick newest-intent，再按同 snapshot Burst/non-burst priority；continuous guard/direction 单独保留。
 
 12. **旧 round、旧 generation、旧 interruption epoch 的输入到达**
     如果 input snapshot、request、buffer entry、decision 或 command 的 round/generation/epoch/config hash/UI context generation 与当前 runtime 不匹配，必须 fail closed，记录 stale reason。不得把旧 quick restart、旧 focus generation、旧 pause 前、旧 config 下的输入套到当前回合。
@@ -568,7 +582,7 @@
 | Attack / projectile / burst systems | 消费 `light_attack`、`heavy_attack`、`projectile`、`burst` candidate command；负责成本、取消、命中和 terminal reject reason。 |
 | UI / pause / menu flow | 消费 `pause`、`confirm`、`cancel`、`ui_*` request；提供 stable UI context stack、focus owner ids、quick restart/exit semantic request；必须防止恢复确认输入进入 combat command flow。 |
 | Web platform shell | 提供 focus/page/fullscreen/canvas focus signals、prevent-default boundary、keyboard reconciliation capability、audio/focus recovery overlay。 |
-| Input settings / profile selection | MVP 只提供 Standard / Alternate / Accessibility profile selection、键位配置、冲突检测、reserved-key warning、ghosting fallback、input config hash；不得允许同 active context duplicate combat mapping。自由 remapping capture 是后续系统，不是当前 MVP 阻塞依赖。 |
+| Input settings / profile selection / remapping | Internal prototype 可只提供 Standard / Alternate / Accessibility profile selection、键位配置、冲突检测、reserved-key warning、ghosting fallback、input config hash；public/player-facing MVP 还必须提供 free keyboard remapping capture、player key-test flow、one-handed/serial-friendly layout support 和 remap conflict validation。不得允许同 active context duplicate combat mapping。 |
 | QA trace / replay diagnostics | 消费 input sample、snapshot、buffer entry、decision record、request record、UI context record 和 command record，用于调查吞键、焦点恢复、过早/过晚输入和 browser event 合并问题。 |
 | Debug / tuning display | 只能作为 UI context 消费 request；不得绕过 router 改 combat state 或读取 physical key。 |
 
@@ -588,7 +602,7 @@
 | `projectile_buffer_ticks` | 4 | 2-6 | Tunable between builds; not during round | projectile 提前输入容忍度；默认短于普通攻击以避免远程牵制自动化。 |
 | `burst_buffer_ticks` | 3 | 2-4 | Tunable between builds; not during round | burst 提前输入容忍度；高价值反杀命令默认更严格。 |
 | `direction_guard_buffer_ticks` | 3 | 1-4 | Tunable between builds; not during round | direction/guard pressed-edge transition grace；continuous held state 不靠该值长期保留。 |
-| `hitstop_buffer_realtime_cap_ms` | 150 | 66-200 | Tunable between builds; not during round | hitstop 中 one-shot input 可保留的最大真实时间。 |
+| `hitstop_buffer_realtime_cap_ms` | 120 | 66-150 | Tunable between builds; not during round | hitstop-created one-shot input 从 physical press 到 evaluation 可保留的最大真实时间；不与 post-hitstop buffer 叠加放宽。 |
 | `runtime_request_buffer_ticks` | 0 | 0 only | Locked for MVP | pause/confirm/cancel/ui navigation 不进入 combat buffer。 |
 | `countdown_direction_pre_read_enabled` | true | true/false | Tunable between builds | countdown/resume countdown 中是否允许方向预读。 |
 | `countdown_guard_pre_read_enabled` | true | true/false | Tunable between builds | round-start countdown 中是否允许 guard continuous pre-read。 |
@@ -603,10 +617,15 @@
 | `input_priority_projectile` | 100 | fixed table | Locked for MVP | same-snapshot one-shot priority。 |
 | `max_input_diagnostics_per_tick` | 32 | 16-64 | Tunable between builds | 单 tick input diagnostics 上限。 |
 | `max_transient_records_per_snapshot` | 8 | 4-16 | Tunable between builds | 同 snapshot press/release burst 记录上限。 |
-| `input_trace_window_ticks` | 600 | 120-1800 | Tunable between builds | QA trace retention window；600 ticks 约 10 秒 running time。 |
-| `max_input_trace_memory_bytes` | 1,048,576 | 262,144-2,097,152 | Tunable between builds | input trace window 总 byte 上限。 |
-| `input_snapshot_max_bytes` | 1024 | 512-2048 | Tunable between builds | 单 snapshot serialized payload 预算。 |
-| `input_decision_record_max_bytes` | 512 | 256-1024 | Tunable between builds | 单 decision/request/lifecycle record 预算。 |
+| `input_trace_window_ticks` | 180 | 120-600 | Tunable between builds | QA trace retention window；默认与 fixed runtime trace window 对齐，180 ticks 约 3 秒 running time。 |
+| `max_input_trace_memory_bytes` | 262,144 | 131,072-524,288 | Tunable between builds | input trace window 总 byte 上限；必须作为 fixed runtime `trace_total_memory_budget_bytes` 的子预算，不得与全局 trace 预算相互覆盖。 |
+| `input_sample_max_bytes` | 256 | 128-512 | Tunable between builds | 单 InputSample canonical serialized payload 预算。 |
+| `input_snapshot_max_bytes` | 1024 | 512-2048 | Tunable between builds | 单 InputSnapshot serialized payload 预算。 |
+| `input_buffer_entry_max_bytes` | 512 | 256-1024 | Tunable between builds | 单 InputBufferEntry serialized payload 预算。 |
+| `input_request_record_max_bytes` | 512 | 256-1024 | Tunable between builds | 单 InputRequestRecord serialized payload 预算。 |
+| `input_decision_record_max_bytes` | 512 | 256-1024 | Tunable between builds | 单 InputDecisionRecord serialized payload 预算。 |
+| `ui_context_record_max_bytes` | 768 | 384-1536 | Tunable between builds | 单 UIContextRecord serialized payload 预算。 |
+| `candidate_command_record_max_bytes` | 512 | 256-1024 | Tunable between builds | 单 candidate combat command handoff record 预算。 |
 | `input_processing_budget_ms_p95` | 0.20 | 0.10-0.50 | Tunable between builds | Web p95 input capture + snapshot + buffer processing budget。 |
 | `input_processing_budget_ms_p99` | 0.50 | 0.25-1.00 | Tunable between builds | Web p99 input processing budget。 |
 | `input_heap_growth_budget_mb_per_60s` | 1.0 | 0.5-2.0 | Tunable between builds | exported Web steady-state input-owned heap growth budget。 |
@@ -625,7 +644,8 @@
 - Tuning must not compensate for broken runtime timing, frame stalls, focus bugs, state-machine rejection bugs, stale generation, wrong buffer age, or lost cleanup. Fix the bug instead of widening the buffer.
 - Values outside safe range require GDD revision and fresh review before implementation uses them.
 - `qa_bounded` / `dev_verbose` trace may exceed minimal trace volume only within explicit caps; trace overflow must summarize, not allocate unbounded records.
-- Assist/profile differences must be visible to the player and QA; Standard Profile cannot silently inherit assist behavior.
+- Assist/profile/remap differences must be visible to the player and QA; Standard Profile cannot silently inherit assist behavior.
+- Public/player-facing MVP remapping must change only binding/config fields, not combat buffer windows, priority, hitstop cap or guard legality.
 - Accessibility prompt timing and toggle guard do not change combat buffer windows in MVP. If a future assist mode widens combat timing, it requires explicit GDD revision, separate profile labeling, separate playtest data, and fresh review.
 
 ## Acceptance Criteria
@@ -634,12 +654,12 @@
 
 - **AC-IB-01 — Canonical determinism**: Owner QA automation. Fixture `IB-AUTH-001`. Given identical input-event fixture, UI context sequence, runtime-state sequence, target tick sequence, round IDs, player/actor IDs, generation/epoch IDs, config hash, tuning config and deterministic ID seed, when the input system runs twice, then canonical serialized `InputSample`, `InputSnapshot`, `InputBufferEntry`, `InputDecisionRecord`, `InputRequestRecord`, `UIContextRecord`, and candidate command streams have identical hashes and identical ordered records.
 - **AC-IB-02 — Required schema fields**: Owner QA automation. Fixture `IB-AUTH-002`. Every `InputSample`, `InputSnapshot`, `InputBufferEntry`, `InputDecisionRecord`, `InputRequestRecord`, and `UIContextRecord` includes the required fields from Detailed Rules 6, 11, 12, 13, 14, and 15; missing field, unknown enum, live Node reference, or unstable NodePath authority fails validation.
-- **AC-IB-03 — Router is sole authority**: Owner integration QA. Fixture `IB-AUTH-003`. Given gameplay, pause menu, overlay, profile selection and text-entry contexts, physical keys are recorded by central router before any semantic consumption; no Godot `Control` or gameplay node can produce combat command or accepted request without matching router record.
+- **AC-IB-03 — Router is sole authority**: Owner integration QA + code/static audit. Fixture `IB-AUTH-003`. Given gameplay, pause menu, overlay, profile selection, remap capture and text-entry contexts, physical keys are recorded by central router before any semantic consumption; no Godot `Control` or gameplay node can produce combat command or accepted request without matching router record. Pass evidence requires an automated/static check or runtime assertion list proving approved UI entrypoints only consume router semantic actions.
 - **AC-IB-04 — Combat/request branch separation**: Owner unit QA. Fixture `IB-AUTH-004`. `pause`, `confirm`, `cancel`, `ui_*`, quick restart and exit create `InputRequestRecord` only and never create combat `InputBufferEntry`; combat actions never directly create runtime/UI request records.
 - **AC-IB-05 — Unified seal cutoff**: Owner unit QA. Fixture `IB-AUTH-005`. Given samples before, at, and after `seal_cutoff_physical_event_sequence_index`, only samples `<= cutoff` enter the current snapshot; later samples enter a future target and cannot mutate the sealed snapshot.
 - **AC-IB-06 — Catch-up no retroactive input**: Owner integration QA. Fixture `IB-AUTH-006`. When runtime processes multiple delayed ticks in one host frame, physical events received during that host frame are not applied to historical delayed ticks; missing historical ticks receive `no_new_physical_input` snapshots only.
 - **AC-IB-07 — Catch-up safe continuous inheritance**: Owner unit QA. Fixture `IB-AUTH-007`. `no_new_physical_input` inherits direction/guard only when same round, generation, epoch, config, focus-safe, not pending-release and policy permits continuous state; otherwise direction is neutral, guard is false, and `catch_up_continuous_state_dropped` is recorded.
-- **AC-IB-08 — Non-advancing context snapshots**: Owner unit QA. Fixture `IB-AUTH-008`. During countdown, pause, focus_suspended, recovery_pause, automatic presentation ack wait, player recovery prompt, resume countdown and round_ended with no combat tick commit, snapshot has `target_committed_tick_index = null`, valid `target_context_sequence_id`, and no forged `current_committed_tick_index + 1`.
+- **AC-IB-08 — Non-advancing context snapshots**: Owner unit QA. Fixture `IB-AUTH-008`. During countdown, pause, focus_suspended, recovery_pause, automatic presentation ack wait, player recovery prompt, resume countdown and round_ended with no combat tick commit, snapshot has `target_committed_tick_index_if_any = null`, valid `target_context_sequence_id_if_applicable`, valid `last_committed_post_commit_runtime_state_if_any`, and no forged `current_committed_tick_index + 1` or capture-time future post-commit state.
 - **AC-IB-09 — Browser key repeat suppression**: Owner Web smoke QA. Fixture `IB-AUTH-009`. Given one keydown, five browser repeat keydowns, then one keyup for the same key in exported Web, exactly one snapshot has `pressed = true`; repeats create no additional pressed edges and are aggregated as repeat diagnostics.
 - **AC-IB-10 — Same-host-frame tap is not swallowed**: Owner unit QA. Fixture `IB-AUTH-010`. Given keydown→keyup for `light_attack` before one snapshot is sealed, final held is false, transient press/release is traceable, and one valid one-shot buffer entry is created if context allows capture.
 
@@ -650,12 +670,12 @@
 - **AC-IB-13 — Direction/guard transition boundaries**: Owner unit QA. Fixture `IB-LIFE-003`. For `direction_guard_buffer_ticks` values 1, 3, and 4, transition age `0..max` is valid, age `max + 1` expires, and continuous held direction/guard remains represented separately from transition grace.
 - **AC-IB-14 — Hitstop running-age anchor**: Owner integration QA. Fixture `IB-LIFE-004`. Given running tick `T` creates hitstop and `light_attack` is pressed during hitstop, no command executes during hitstop; the entry is evaluated no earlier than first resumed running tick; `buffer_age_running_ticks = 0` on that first running tick.
 - **AC-IB-15 — Hitstop realtime cap**: Owner performance/gameplay QA. Fixture `IB-LIFE-005`. Given one hitstop press at realtime age `<= hitstop_buffer_realtime_cap_ms` and one at `cap + 1ms`, the first can be evaluated and the second expires as `expired_by_hitstop_realtime_cap` even though running age is 0.
-- **AC-IB-16 — Same snapshot high-value conflict is strict**: Owner unit QA. Fixture `IB-LIFE-006`. Given `burst` plus any `light_attack`, `heavy_attack`, or `projectile` are pressed for one actor in one snapshot, all same-group one-shot entries reject as `ambiguous_high_value_conflict`, no command is submitted, no fallback occurs, and no burst resource is consumed. Given only non-burst one-shot conflicts, `light_attack > heavy_attack > projectile` priority applies.
+- **AC-IB-16 — Same snapshot Burst priority is deterministic**: Owner unit QA. Fixture `IB-LIFE-006`. Given `burst` plus any `light_attack`, `heavy_attack`, or `projectile` are pressed for one actor in one snapshot, exactly one Burst candidate is selected, all non-burst same-group entries are `superseded_by_burst_same_snapshot`, ordinary guard is suppressed for the vulnerability window, and no attack/projectile fallback can occur if Burst terminally rejects. Given only non-burst one-shot conflicts, `light_attack > heavy_attack > projectile` priority applies.
 - **AC-IB-17 — Cross-tick newest intent wins**: Owner unit QA. Fixture `IB-LIFE-007`. Given older burst and newer light attack are both valid pending entries, the newer light attack is selected; if it terminally rejects, no fallback to older burst occurs and older entries are `superseded_by_newer_attempt`.
-- **AC-IB-18 — Burst unavailable does not fallback to attack**: Owner integration QA. Fixture `IB-LIFE-008`. Given an unambiguous selected burst terminally rejects for unavailable resource, burst is consumed as `terminal_reject = burst_unavailable`, no one-shot fallback executes, continuous direction remains available, and guard follows attack-suppression rules only if a separate valid attack attempt exists.
-- **AC-IB-19 — Retain-until-legal is bounded and query-owned**: Owner integration QA. Fixture `IB-LIFE-009`. Given combat legality query returns `retain_until_legal`, the entry remains only while `is_action_buffer_valid` is true; missing query returns `retain_query_unavailable` and fails closed according to policy rather than guessing combat state.
+- **AC-IB-18 — Burst terminal reject does not fallback to attack or guard**: Owner integration QA with deterministic legality stub. Fixture `IB-LIFE-008`. Given a selected Burst terminally rejects for unavailable resource or state, Burst is consumed as `terminal_reject = burst_unavailable` or the stubbed terminal reason, no one-shot fallback executes, continuous direction remains available, ordinary guard remains suppressed for the declared vulnerability window, and the input system records the downstream stub result without owning resource/guard combat validation.
+- **AC-IB-19 — Retain-until-legal is bounded and query-owned**: Owner integration QA with deterministic legality stub. Fixture `IB-LIFE-009`. Given combat legality query returns `retain_until_legal`, the entry remains only while `is_action_buffer_valid` and any hitstop realtime lifetime cap are true; missing query returns `retain_query_unavailable` and fails closed according to policy rather than guessing combat state. The fixture owns only input retention behavior, not final combat legality.
 - **AC-IB-20 — Capacity eviction is deterministic**: Owner unit QA. Fixture `IB-LIFE-010`. When adding a pending entry would exceed `max_buffer_entries_per_actor`, expired/invalidated/superseded entries are removed first; remaining eviction uses the defined ordering and records `capacity_evicted`.
-- **AC-IB-21 — Attack attempt suppresses ordinary guard option-select**: Owner integration QA. Fixture `IB-LIFE-011`. Given `guard` held and `light_attack` pressed in the same valid running snapshot, raw guard held remains traceable, the attack candidate is represented, `guard_suppressed_by_attack_attempt = true` is attached, `ordinary_guard_intent_suppressed` is recorded, and downstream validation cannot grant both ordinary guard protection and attack attempt payoff in the same vulnerability window.
+- **AC-IB-21 — Attack or Burst attempt suppresses ordinary guard option-select**: Owner integration QA with guard/combat stub. Fixture `IB-LIFE-011`. Given `guard` held and `light_attack` or `burst` pressed in the same valid running snapshot, raw guard held remains traceable, the selected candidate is represented, `guard_suppressed_by_attack_attempt = true` is attached, `ordinary_guard_intent_suppressed` is recorded, and the downstream stub receives no ordinary guard protection flag for the same vulnerability window. Full block/hit reaction validation remains owned by the later guard/combat GDD.
 
 ### MVP Blocking — Interruption, Countdown, Focus, and Recovery
 
@@ -664,7 +684,7 @@
 - **AC-IB-24 — Pending release trusted keyup cleanup**: Owner Web smoke QA. Fixture `IB-REC-003`. After unsafe interruption, pre-existing held combat keys are blocked as pending release; UI confirm does not clear them; trusted post-restore keyup clears pending release without producing combat pressed.
 - **AC-IB-25 — Pending release reconciliation cleanup**: Owner Web smoke QA. Fixture `IB-REC-004`. If focus restore reconciliation proves a pending key is currently up, pending release clears as `pending_release_cleared_by_reconciliation`; no combat `released` or `pressed` edge is generated.
 - **AC-IB-26 — Pending release no-deadlock fallback**: Owner Web smoke QA. Fixture `IB-REC-005`. If no keyup arrives and reconciliation cannot prove key up, the next keydown for the pending key is consumed only as cleanup, records `reconciled_up_blocked_press`, and requires keyup→fresh keydown before combat-visible pressed.
-- **AC-IB-27 — Round-start countdown direction and guard pre-read**: Owner gameplay QA. Fixture `IB-REC-006`. During round-start countdown, direction can affect first running tick preparation and guard held can become continuous guard intent at GO; neither creates pressed edges or one-shot entries.
+- **AC-IB-27 — Round-start countdown direction and guard pre-read**: Owner gameplay QA. Fixture `IB-REC-006`. During round-start countdown, held direction creates `countdown_direction_pre_read` resolved axis and held guard creates `countdown_guard_pre_read` continuous intent for the first GO running snapshot only if still held and not pending-release; neither creates pressed edges, one-shot entries, movement command before GO, or resource/action command.
 - **AC-IB-28 — Countdown one-shot blocked**: Owner gameplay QA. Fixture `IB-REC-007`. During round-start countdown, `light_attack`, `heavy_attack`, `projectile`, and `burst` create no combat buffer entry; held-through-GO does not attack until release+fresh press.
 - **AC-IB-29 — Resume countdown old guard remains blocked**: Owner integration QA. Fixture `IB-REC-008`. After pause/focus/recovery, old held guard remains pending release during resume countdown until trusted cleanup; confirm does not restore guard.
 - **AC-IB-30 — SOCD neutralization**: Owner unit QA. Fixture `IB-REC-009`. Simultaneous left+right or up+down produces neutral axis, creates no direction transition entry for that axis, and records `opposite_axis_neutralized` without deleting unrelated one-shot inputs.
@@ -677,37 +697,37 @@
 - **AC-IB-34 — Quick restart and exit are menu-owned semantic requests with anti-misclick protection**: Owner UI integration QA. Fixture `IB-UI-004`. Confirm on focused quick restart/exit control first creates a consumed confirm record, then generates `request_type = quick_restart` or `exit_to_menu`, records consumed context/control ids and idempotency key, triggers unsafe cleanup, and never creates combat input. Held/repeat confirm on newly opened menus and duplicate confirm within `dangerous_request_repeat_lockout_ms` cannot trigger the dangerous request.
 - **AC-IB-35 — Automatic presentation ack wait ignores confirm**: Owner integration QA. Fixture `IB-UI-005`. During automatic `presentation_ack_wait` without player prompt, confirm does not satisfy presentation watermark, does not resume runtime, and does not create combat input; a player recovery prompt can consume confirm only if it owns top context.
 - **AC-IB-36 — Stale UI focus fails closed**: Owner UI unit QA. Fixture `IB-UI-006`. If a focused Control is destroyed, hidden, or has stale generation, request rejects as `stale_ui_context_or_focus_owner` and does not fall through to lower menu or combat.
-- **AC-IB-37 — Web prevent-default and modifier matrix**: Owner Web smoke QA. Fixture `IB-UI-007`. Exported Web build verifies arrows, Enter, P, N, Z/X/C/V/B, W/A/S/D, J/K/L/I/O, Space and Ctrl/Alt/Shift/Meta chord cases in gameplay, menu, overlay, profile selection and text-entry contexts do not scroll page, double-submit, trigger browser UI, or leak across contexts except where explicitly allowed; `InputSample` records modifier and reserved shortcut decisions.
+- **AC-IB-37 — Web prevent-default and modifier matrix**: Owner Web smoke QA. Fixture `IB-UI-007`. Exported Web build verifies arrows, Enter, P, N, Z/X/C/V/B, W/A/S/D, J/K/L/I/O, Space and Ctrl/Alt/Shift/Meta chord cases in gameplay, menu, overlay, profile selection, remap capture and text-entry contexts. Pass means mapped non-reserved keys do not scroll page, double-submit or leak across contexts; reserved browser/system chords are recorded as reserved/observed, never produce combat command, and are documented in the Web shell ADR rather than requiring impossible browser UI suppression.
 
 ### MVP Blocking — Accessibility and Input Configuration
 
 - **AC-IB-38 — Config validation rejects unsafe mappings**: Owner unit QA. Fixture `IB-ACC-001`. Duplicate combat binding in the same active context, missing required action, duplicate one-shot priority, reserved-key conflict, out-of-range tuning, nonzero `runtime_request_buffer_ticks`, invalid profile, invalid toggle guard state, invalid prompt timing, or `countdown_action_pre_buffer_enabled = true` fails validation before combat starts.
-- **AC-IB-39 — Standard, Alternate, and Accessibility profiles are available and hash-visible**: Owner UX/accessibility QA. Fixture `IB-ACC-002`. MVP exposes Standard, Alternate, and Accessibility keyboard profiles before round start; each profile has concrete key bindings, required combo evidence, profile id, hash-visible settings, and selected profile appears in `input_config_hash` and QA evidence.
-- **AC-IB-40 — Toggle guard assist lifecycle is deterministic**: Owner accessibility QA. Fixture `IB-ACC-003`. In Accessibility profile, toggle guard state is serialized in snapshot/hash and produces identical streams across repeated fixture runs covering round start, countdown, running, hitstop, pause, focus loss, recovery pause, resume countdown, profile selection, round end, quick restart, and browser repeat; UI/menu contexts cannot silently change combat toggle state.
-- **AC-IB-41 — Ghosting fallback is pass/fail, not only logged**: Owner Web smoke QA. Fixture `IB-ACC-004`. QA tests required movement+guard+action combos for Standard, Alternate, and Accessibility profiles; if Standard fails a required combo on target browser/hardware, Alternate or Accessibility must actually pass the combo set before MVP acceptance. Warning-only fallback fails this AC.
+- **AC-IB-39 — Profiles, key test, and public remap gate are hash-visible**: Owner UX/accessibility QA. Fixture `IB-ACC-002`. Internal prototype exposes Standard, Alternate, and Accessibility keyboard profiles before round start; each profile has concrete key bindings, required combo evidence, profile id, hash-visible settings, and selected profile appears in `input_config_hash` and QA evidence. Public/player-facing MVP additionally exposes keyboard-only remap/key-test flow before round start; remapped bindings are conflict-validated, hash-visible, and included in QA evidence.
+- **AC-IB-40 — Toggle guard assist lifecycle matrix is deterministic**: Owner accessibility QA. Fixture `IB-ACC-003`. In Accessibility profile, toggle guard state is serialized in snapshot/hash and produces identical streams across repeated fixture rows for: round start reset, countdown pre-read, running toggle on/off, hitstop toggle, pause entry/exit, focus loss, recovery pause, resume countdown, profile selection, round end, quick restart, and browser repeat. Each row must declare expected state before/after, emitted `InputDecisionRecord`, player-visible state feedback, and whether UI/menu context is allowed to change combat toggle state.
+- **AC-IB-41 — Ghosting fallback is pass/fail, not only logged**: Owner Web smoke QA. Fixture `IB-ACC-004`. QA tests required movement+guard+action combos for Standard, Alternate, Accessibility and remapped public-MVP layouts across the approved browser/hardware matrix from the Web shell ADR. Player-facing key-test flow must detect failed required combos and offer a passing profile/remap path; if Standard fails a required combo on target browser/hardware, Alternate, Accessibility or remap must actually pass before player-facing MVP acceptance. Warning-only fallback fails this AC.
 - **AC-IB-42 — Recovery prompts meet measurable accessibility standards**: Owner UX/accessibility QA. Fixture `IB-ACC-005`. Focus/pause/recovery resume flow displays localization-keyed, 200%-scale-safe, non-color-only prompt text with minimum 18px equivalent text, 4.5:1 text contrast, 3:1 focus/icon contrast, visible focus ownership, minimum display time from prompt timing knobs, and no internal enum strings; confirm/cancel cannot leak into combat input.
 - **AC-IB-43 — Countdown prompt matches actual rules**: Owner UX QA. Fixture `IB-ACC-006`. First-round/training prompt states movement/guard can be held before GO and attack/burst must be pressed after GO; resume countdown prompt separately states old held keys must be released/fresh-pressed according to recovery rules; both prompts are non-color-only, measurable under AC-IB-42, and do not use internal enum strings.
 
 ### MVP Blocking — Performance and Trace Bounds
 
-- **AC-IB-44 — Input processing budget**: Owner performance QA. Fixture `IB-PERF-001`. In exported Web minimal trace mode, after 5s warmup and at least 3 × 60s runs per browser smoke scenario, input capture drain + snapshot build + request route + buffer processing meets `input_processing_budget_ms_p95 <= 0.20` and `input_processing_budget_ms_p99 <= 0.50`.
-- **AC-IB-45 — Catch-up processing budget included**: Owner performance QA. Fixture `IB-PERF-002`. Performance scenarios include a catch-up batch of at least 4 delayed ticks in one host frame; no retroactive input reads occur and per-seal processing remains within p99 budget or records a blocking performance failure.
-- **AC-IB-46 — Input-owned heap growth budget**: Owner performance QA. Fixture `IB-PERF-003`. In exported Web minimal trace mode, 60 seconds of steady keyboard play stays within `input_heap_growth_budget_mb_per_60s <= 1.0` for input-owned tracked bytes; inability to measure tracked bytes fails the AC.
+- **AC-IB-44 — Input processing budget**: Owner performance QA. Fixture `IB-PERF-001`. In exported Web minimal trace mode, using non-authoritative microsecond profiling from the Profiling/Web shell ADR, after 5s warmup and at least 3 × 60s runs per approved browser smoke scenario, input capture drain + snapshot build + request route + buffer processing meets `input_processing_budget_ms_p95 <= 0.20` and `input_processing_budget_ms_p99 <= 0.50` by the nearest-rank percentile method. Using millisecond-quantized deterministic timestamps makes the result invalid.
+- **AC-IB-45 — Catch-up and recovery-pause processing budget included**: Owner performance QA. Fixture `IB-PERF-002`. Performance scenarios include an in-order catch-up batch of exactly configured `catch_up_max_ticks` delayed ticks in one host frame, default `2`, plus a backlog of `catch_up_max_ticks + 1` that enters `recovery_pause` instead of silent catch-up. No retroactive input reads occur; per-seal processing remains within p99 budget or records a blocking performance failure.
+- **AC-IB-46 — Input-owned heap growth budget**: Owner performance QA. Fixture `IB-PERF-003`. In exported Web minimal trace mode, after warmup longer than the configured input trace window, 60 seconds of steady keyboard play stays within `input_heap_growth_budget_mb_per_60s <= 1.0` for input-owned tracked bytes; inability to measure tracked bytes fails the AC.
 - **AC-IB-47 — Trace overflow is bounded by count and bytes**: Owner unit/performance QA. Fixture `IB-PERF-004`. When diagnostic records exceed per-tick, per-snapshot or total trace byte caps, the system writes bounded summary records with `authoritative_input_loss = false` and does not exceed `max_input_trace_memory_bytes`.
-- **AC-IB-48 — Byte budget check is canonical**: Owner unit QA. Fixture `IB-PERF-005`. Canonical serialized `InputSnapshot`, `InputDecisionRecord`, and `InputRequestRecord` samples in QA fixtures stay within configured byte budgets or fail with bounded diagnostic reason; measurement uses canonical serialization, not editor object size.
+- **AC-IB-48 — Byte budget check is canonical**: Owner unit QA. Fixture `IB-PERF-005`. Canonical serialized `InputSample`, `InputSnapshot`, `InputBufferEntry`, `InputDecisionRecord`, `InputRequestRecord`, `UIContextRecord`, and candidate command samples in QA fixtures stay within configured byte budgets or fail with bounded diagnostic reason; measurement uses canonical serialization, not editor object size.
 - **AC-IB-49 — Functional trace and performance profiling are separated**: Owner performance QA. Fixture `IB-PERF-006`. Performance ACs run only in `minimal_export` trace mode; `qa_bounded` and `dev_verbose` results are marked invalid for p95/p99 approval.
 
 ### MVP Blocking — Player Trust and UX Evidence
 
-- **AC-IB-50 — Player-visible feedback matrix is complete**: Owner UX QA. Fixture `IB-UX-001`. Every input decision reason used by MVP maps to a feedback category, localization key or explicit silent rationale, minimum display time, repeat cooldown, priority, and combat/menu visibility rule; no player-facing prompt displays internal enum strings.
-- **AC-IB-51 — Keyboard-only Web flow is playable**: Owner UX/accessibility QA. Fixture `IB-UX-002`. Starting from page load in exported Web, a tester using only keyboard can focus the game, choose each profile, start a round, pause, recover from focus loss, resolve pending release, quick restart, and exit to menu without mouse input or combat leakage.
-- **AC-IB-52 — Training input history explains blocked input**: Owner gameplay/UX QA. Fixture `IB-UX-003`. In training/debug evidence mode, buffered, rejected, superseded, ambiguous, pending-release, countdown-blocked, burst-unavailable, and stale UI input decisions appear with player-readable explanations tied to their source snapshot/request/entry ids.
-- **AC-IB-53 — Standard profile player trust smoke**: Owner design QA. Fixture `IB-UX-004`. In a 5-minute keyboard smoke walkthrough, tester can demonstrate light attack, heavy attack, projectile, guard, burst, pause, resume, countdown blocked attack, and pending-release recovery; observed failures must be attributable to documented rules, not unexplained dropped input.
+- **AC-IB-50 — Player-visible feedback matrix is complete**: Owner UX QA. Fixture `IB-UX-001`. Every input decision reason from the registered `decision_reason_catalog_version` used by MVP maps to a feedback category, localization key or explicit silent rationale, minimum display time, repeat cooldown, priority, and combat/menu visibility rule; no player-facing prompt displays internal enum strings, and unknown reason codes fail validation.
+- **AC-IB-51 — Keyboard-only Web flow is playable**: Owner UX/accessibility QA. Fixture `IB-UX-002`. Starting from page load in exported Web, a tester using only keyboard can focus the game, choose each profile, complete key-test/remap gate when public-MVP mode is enabled, start a round, pause, navigate with Tab/Shift+Tab or approved escape path, recover from focus loss, resolve pending release, quick restart, and exit to menu without mouse input or combat leakage. If browser audio/fullscreen requires a user activation path, the keyboard-reachable fallback state and Web shell ADR evidence must be present.
+- **AC-IB-52 — Training input history explains blocked input**: Owner gameplay/UX QA. Fixture `IB-UX-003`. In training/debug evidence mode, buffered, rejected, superseded, Burst-priority/no-fallback, pending-release, countdown-blocked, burst-unavailable, and stale UI input decisions appear with player-readable explanations tied to their source snapshot/request/entry ids.
+- **AC-IB-53 — Standard profile player trust smoke**: Owner design QA. Fixture `IB-UX-004`. In a 5-minute keyboard smoke walkthrough, tester must demonstrate at least 3 successful examples each of light attack, heavy attack, projectile, guard, burst, pause/resume, countdown blocked attack, Burst-priority no-fallback feedback, and pending-release recovery. Pass requires zero unexplained dropped-input incidents; every failed action must have a matching `InputDecisionRecord`, player-facing explanation when required by the feedback matrix, or documented downstream combat rejection.
 - **AC-IB-54 — Assist data is separated from Standard balance evidence**: Owner production/QA. Fixture `IB-UX-005`. Standard, Alternate, and Accessibility profile smoke/playtest results are labeled separately; Accessibility toggle guard or prompt timing evidence cannot be used as Standard profile combat balance proof.
 
 ### Review / Integration Gates
 
-- **AC-IB-55 — Fresh review before implementation authority**: Owner production. This revised GDD is not implementation authority until `/design-review design/gdd/input-buffering.md` resolves blocking issues.
-- **AC-IB-56 — Registry sync after approval**: Owner systems/design. After approval, exported constants, schema fields, reason enums, request types, profile constants and profiling knobs from this GDD must be synced to `design/registry/entities.yaml` before implementation tasks consume them.
-- **AC-IB-57 — ADR gate awareness**: Owner technical direction. Implementation must not start until input serialization/snapshot, Web focus/audio shell, Godot pause/time-scale and UI context stack ADR gates are resolved or explicitly scoped as prototype-only exceptions.
-- **AC-IB-58 — Fixed-runtime dependency remains provisional**: Owner design review. If fresh re-review of `fixed-logic-runtime.md` changes runtime state names, ack wait, recovery pause, catch-up or tick terminology, this GDD must be updated before approval.
+- **AC-IB-55 — Fresh review before implementation authority**: Owner production. Pass evidence is a review-log entry showing `/design-review design/gdd/input-buffering.md` returned no blocking issues after this revision; until then, implementation tasks must cite this AC as not passed.
+- **AC-IB-56 — Registry sync after approval**: Owner systems/design. Pass evidence is a diff or checklist showing exported constants, schema fields, reason enums, request types, profile/remap constants and profiling knobs from this GDD synced to `design/registry/entities.yaml` before implementation tasks consume them.
+- **AC-IB-57 — ADR gates are explicit pass/fail blockers**: Owner technical direction. Pass evidence is approved ADR coverage or explicit prototype exception for input serialization/snapshot, Web focus/audio shell, Godot pause/time-scale, UI context stack, remap/key-test flow, and profiling instrumentation. Without that evidence, runtime/input implementation tasks must not start.
+- **AC-IB-58 — Fixed-runtime dependency remains provisional**: Owner design review. Pass evidence is either fresh approval of `fixed-logic-runtime.md` with matching runtime state names, ack wait, recovery pause, catch-up and tick terminology, or a recorded follow-up diff updating this GDD to match the approved runtime dependency.

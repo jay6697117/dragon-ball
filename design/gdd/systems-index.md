@@ -68,7 +68,7 @@ MVP 只验证一个核心假设：玩家能否通过读招、防御、抓硬直�
 | # | System Name | Category | Priority | Status | Design Doc | Depends On |
 |---|-------------|----------|----------|--------|------------|------------|
 | 1 | 固定逻辑步进与战斗运行时 | Foundation | MVP | Revised after ninth fresh review — Pending Fresh Re-review | design/gdd/fixed-logic-runtime.md | — |
-| 2 | 输入映射与输入缓冲 | Foundation | MVP | Revised after fresh re-review — Pending Fresh Re-review | design/gdd/input-buffering.md | 1 |
+| 2 | 输入映射与输入缓冲 | Foundation | MVP | Revised after latest full re-review — Pending Fresh Re-review | design/gdd/input-buffering.md | 1 |
 | 3 | 角色数据与招式数据 | Foundation | MVP | Not Started | design/gdd/character-move-data.md | — |
 | 4 | 动画帧数据与资产元数据 | Foundation | MVP | Not Started | design/gdd/animation-frame-metadata.md | 3, 25 |
 | 5 | 移动与距离控制 | Core | MVP | Not Started | design/gdd/movement-spacing.md | 1, 2, 3 |
@@ -307,5 +307,5 @@ VFX needs combat events to show hits, blocks, bursts, and whiffs; combat feedbac
 - [x] Complete `input-buffering` draft sections.
 - [x] Run `/design-review design/gdd/input-buffering.md`.
 - [x] Re-run `/design-review design/gdd/input-buffering.md` in a fresh session after the first full-review MAJOR REVISION fixes.
-- [ ] Re-run `/design-review design/gdd/input-buffering.md` in a fresh session after the fresh re-review MAJOR REVISION fixes.
+- [ ] Re-run `/design-review design/gdd/input-buffering.md` in a fresh session after the latest full re-review MAJOR REVISION fixes.
 - [ ] Run `/gate-check pre-production` when MVP systems are designed and reviewed.
